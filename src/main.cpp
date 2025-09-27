@@ -10,6 +10,11 @@
 #include <sstream>
 #include <fstream>
 #include <vector>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // Window dimensions
 const int WINDOW_WIDTH = 1280;
@@ -17,9 +22,9 @@ const int WINDOW_HEIGHT = 720;
 
 // Camera parameters
 struct Camera {
-    float distance = 5.0f;
+    float distance = 3.0f;   // Much closer
     float theta = 0.0f;  // Horizontal rotation
-    float phi = 0.0f;    // Vertical rotation
+    float phi = M_PI/4.0f;    // 45 degree angle
     float fov = 45.0f;
 };
 
@@ -48,11 +53,10 @@ out vec3 particle_color;
 
 void main() {
     gl_Position = projection * view * vec4(position.xyz, 1.0);
-    gl_PointSize = 2.0 + position.w * 10.0;  // Size based on mass
+    gl_PointSize = 50.0;  // Very large points
 
-    // Simple color gradient based on distance from origin
-    float dist = length(position.xyz);
-    particle_color = mix(vec3(0.3, 0.5, 1.0), vec3(1.0, 0.3, 0.3), dist / 5.0);
+    // Bright white particles for maximum visibility
+    particle_color = vec3(1.0, 1.0, 1.0);
 }
 )";
 
@@ -138,13 +142,15 @@ void initOpenGL() {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    // Register VBO with CUDA
-    cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, vbo,
+    // Try to register VBO with CUDA (fallback if failed)
+    cudaError_t cuda_error = cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, vbo,
                                  cudaGraphicsRegisterFlagsWriteDiscard);
 
-    if (cudaGetLastError() != cudaSuccess) {
-        std::cerr << "Failed to register VBO with CUDA\n";
-        exit(1);
+    if (cuda_error != cudaSuccess) {
+        std::cout << "CUDA-OpenGL interop failed, using fallback mode (copying data)\n";
+        cuda_vbo_resource = nullptr; // Signal fallback mode
+    } else {
+        std::cout << "CUDA-OpenGL interop enabled\n";
     }
 }
 
@@ -153,23 +159,37 @@ void render(GLFWwindow* window) {
     // Update simulation
     simulation->step();
 
-    // Map OpenGL buffer to CUDA
-    float* d_vbo_ptr;
-    size_t num_bytes;
-    cudaGraphicsMapResources(1, &cuda_vbo_resource, 0);
-    cudaGraphicsResourceGetMappedPointer((void**)&d_vbo_ptr, &num_bytes,
-                                         cuda_vbo_resource);
+    // Update VBO data
+    if (cuda_vbo_resource) {
+        // CUDA-OpenGL interop mode
+        float* d_vbo_ptr;
+        size_t num_bytes;
+        cudaGraphicsMapResources(1, &cuda_vbo_resource, 0);
+        cudaGraphicsResourceGetMappedPointer((void**)&d_vbo_ptr, &num_bytes,
+                                             cuda_vbo_resource);
 
-    // Get packed positions from simulation
-    float* packed_positions = simulation->getPackedPositions();
+        float* packed_positions = simulation->getPackedPositions();
+        cudaMemcpy(d_vbo_ptr, packed_positions,
+                   simulation->getBodies()->n * 4 * sizeof(float),
+                   cudaMemcpyDeviceToDevice);
 
-    // Copy to VBO
-    cudaMemcpy(d_vbo_ptr, packed_positions,
-               simulation->getBodies()->n * 4 * sizeof(float),
-               cudaMemcpyDeviceToDevice);
+        cudaGraphicsUnmapResources(1, &cuda_vbo_resource, 0);
+    } else {
+        // Fallback mode: copy data from GPU to CPU to GPU
+        float* packed_positions = simulation->getPackedPositions();
+        std::vector<float> host_data(simulation->getBodies()->n * 4);
 
-    // Unmap buffer
-    cudaGraphicsUnmapResources(1, &cuda_vbo_resource, 0);
+        cudaMemcpy(host_data.data(), packed_positions,
+                   simulation->getBodies()->n * 4 * sizeof(float),
+                   cudaMemcpyDeviceToHost);
+
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0,
+                       simulation->getBodies()->n * 4 * sizeof(float),
+                       host_data.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    }
 
     // Clear screen
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -230,6 +250,7 @@ void render(GLFWwindow* window) {
     glBindVertexArray(vao);
     glDrawArrays(GL_POINTS, 0, simulation->getBodies()->n);
     glBindVertexArray(0);
+
 
     // Show FPS and performance
     static int frame_count = 0;
@@ -317,14 +338,16 @@ int main(int argc, char** argv) {
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);  // Enable vsync
 
-    // OpenGL is ready (using GL_GLEXT_PROTOTYPES instead of GLEW)
+    // Check OpenGL version
+    std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
+    std::cout << "GLSL Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
 
     // Set callbacks
     glfwSetMouseButtonCallback(window, mouse_button_callback);
     glfwSetCursorPosCallback(window, cursor_position_callback);
     glfwSetScrollCallback(window, scroll_callback);
 
-    // Initialize simulation
+    // Initialize simulation (this will set CUDA device)
     simulation = std::make_unique<physgrad::Simulation>(params);
 
     // Initialize OpenGL
