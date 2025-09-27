@@ -18,7 +18,7 @@ void checkCudaError(cudaError_t error, const char* file, int line) {
     }
 }
 
-__global__ void computeForcesBruteForce(
+__global__ void computeForces(
     float* acc_x, float* acc_y, float* acc_z,
     const float* pos_x, const float* pos_y, const float* pos_z,
     const float* mass, int n, float epsilon_sq, float G)
@@ -291,7 +291,7 @@ void launchComputeForces(float* d_acc_x, float* d_acc_y, float* d_acc_z,
     int threads = 256;
     int blocks = (n + threads - 1) / threads;
 
-    computeForcesBruteForce<<<blocks, threads, 0, stream>>>(
+    computeForces<<<blocks, threads, 0, stream>>>(
         d_acc_x, d_acc_y, d_acc_z,
         d_pos_x, d_pos_y, d_pos_z,
         d_mass, n, epsilon, G
