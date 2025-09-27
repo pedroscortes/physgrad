@@ -67,12 +67,10 @@ __global__ void integrateLeapfrog(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
 
-    // Leapfrog-Verlet: v(t+dt/2) = v(t-dt/2) + a(t)*dt
     vel_x[i] += acc_x[i] * dt;
     vel_y[i] += acc_y[i] * dt;
     vel_z[i] += acc_z[i] * dt;
 
-    // x(t+dt) = x(t) + v(t+dt/2)*dt
     pos_x[i] += vel_x[i] * dt;
     pos_y[i] += vel_y[i] * dt;
     pos_z[i] += vel_z[i] * dt;
@@ -154,6 +152,13 @@ BodySystem::~BodySystem() {
     cudaFree(d_acc_y);
     cudaFree(d_acc_z);
     cudaFree(d_mass);
+
+    cudaFree(d_grad_pos_x);
+    cudaFree(d_grad_pos_y);
+    cudaFree(d_grad_pos_z);
+    cudaFree(d_grad_vel_x);
+    cudaFree(d_grad_vel_y);
+    cudaFree(d_grad_vel_z);
 }
 
 void BodySystem::initializeCluster(const SimParams& params) {
@@ -208,41 +213,82 @@ float BodySystem::computeEnergy(const SimParams& params) const {
     return kinetic_energy;
 }
 
-// ============================================================================
-// Simulation Implementation
-// ============================================================================
+void BodySystem::allocateGradients() {
+    size_t size = n * sizeof(float);
+
+    if (!d_grad_pos_x) {
+        CUDA_CHECK(cudaMalloc(&d_grad_pos_x, size));
+        CUDA_CHECK(cudaMalloc(&d_grad_pos_y, size));
+        CUDA_CHECK(cudaMalloc(&d_grad_pos_z, size));
+        CUDA_CHECK(cudaMalloc(&d_grad_vel_x, size));
+        CUDA_CHECK(cudaMalloc(&d_grad_vel_y, size));
+        CUDA_CHECK(cudaMalloc(&d_grad_vel_z, size));
+    }
+}
+
+void BodySystem::zeroGradients() {
+    if (!d_grad_pos_x) return;
+
+    size_t size = n * sizeof(float);
+    CUDA_CHECK(cudaMemset(d_grad_pos_x, 0, size));
+    CUDA_CHECK(cudaMemset(d_grad_pos_y, 0, size));
+    CUDA_CHECK(cudaMemset(d_grad_pos_z, 0, size));
+    CUDA_CHECK(cudaMemset(d_grad_vel_x, 0, size));
+    CUDA_CHECK(cudaMemset(d_grad_vel_y, 0, size));
+    CUDA_CHECK(cudaMemset(d_grad_vel_z, 0, size));
+}
+
+void BodySystem::setGradientFromEnergy(float grad_energy) {
+    allocateGradients();
+    zeroGradients();
+
+    float grad_value = grad_energy / n;
+    std::vector<float> temp_grad(n, grad_value);
+
+    size_t size = n * sizeof(float);
+    CUDA_CHECK(cudaMemcpy(d_grad_pos_x, temp_grad.data(), size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_grad_pos_y, temp_grad.data(), size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_grad_pos_z, temp_grad.data(), size, cudaMemcpyHostToDevice));
+}
+
+void BodySystem::getGradients(std::vector<float>& grad_pos_x,
+                             std::vector<float>& grad_pos_y,
+                             std::vector<float>& grad_pos_z) const {
+    if (!d_grad_pos_x) return;
+
+    grad_pos_x.resize(n);
+    grad_pos_y.resize(n);
+    grad_pos_z.resize(n);
+
+    size_t size = n * sizeof(float);
+    CUDA_CHECK(cudaMemcpy(grad_pos_x.data(), d_grad_pos_x, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(grad_pos_y.data(), d_grad_pos_y, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(grad_pos_z.data(), d_grad_pos_z, size, cudaMemcpyDeviceToHost));
+}
+
 
 Simulation::Simulation(const SimParams& params)
     : params(params), bodies(std::make_unique<BodySystem>(params.num_bodies))
 {
-    // Create CUDA streams
     CUDA_CHECK(cudaStreamCreate(&compute_stream));
     CUDA_CHECK(cudaStreamCreate(&transfer_stream));
-
-    // Allocate packed position buffer for OpenGL
     CUDA_CHECK(cudaMalloc(&d_packed_positions, params.num_bodies * 4 * sizeof(float)));
-
-    // Initialize the particle system
     bodies->initializeCluster(params);
 
-    std::cout << "Simulation initialized with " << params.num_bodies << " bodies\n";
-    std::cout << "Initial energy: " << bodies->computeEnergy(params) << "\n";
 }
 
 void Simulation::step() {
     auto start = std::chrono::high_resolution_clock::now();
 
-    // Compute forces
     launchComputeForces(
         bodies->d_acc_x, bodies->d_acc_y, bodies->d_acc_z,
         bodies->d_pos_x, bodies->d_pos_y, bodies->d_pos_z,
         bodies->d_mass, bodies->n,
-        params.epsilon * params.epsilon,  // epsilon squared
+        params.epsilon * params.epsilon,
         params.G,
         compute_stream
     );
 
-    // Integrate positions and velocities
     launchIntegrate(
         bodies->d_pos_x, bodies->d_pos_y, bodies->d_pos_z,
         bodies->d_vel_x, bodies->d_vel_y, bodies->d_vel_z,
@@ -251,7 +297,6 @@ void Simulation::step() {
         compute_stream
     );
 
-    // Wait for computation to finish
     CUDA_CHECK(cudaStreamSynchronize(compute_stream));
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -273,15 +318,10 @@ float* Simulation::getPackedPositions() {
 }
 
 float Simulation::getGFLOPS() const {
-    // Each force pair: ~20 FLOPs
-    // Total: N*(N-1) pairs
     float flops = 20.0f * bodies->n * (bodies->n - 1);
-    return (flops / last_step_ms) / 1e6f;  // GFLOPS
+    return (flops / last_step_ms) / 1e6f;
 }
 
-// ============================================================================
-// Kernel Launchers
-// ============================================================================
 
 void launchComputeForces(float* d_acc_x, float* d_acc_y, float* d_acc_z,
                         const float* d_pos_x, const float* d_pos_y, const float* d_pos_z,
