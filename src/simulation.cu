@@ -484,6 +484,69 @@ void BodySystem::getGradients(std::vector<float>& grad_pos_x,
     CUDA_CHECK(cudaMemcpy(grad_pos_z.data(), d_grad_pos_z, size, cudaMemcpyDeviceToHost));
 }
 
+// Optimized batch transfer methods
+void BodySystem::setStateFromHost(const std::vector<float>& pos_x, const std::vector<float>& pos_y, const std::vector<float>& pos_z,
+                                 const std::vector<float>& vel_x, const std::vector<float>& vel_y, const std::vector<float>& vel_z,
+                                 const std::vector<float>& masses, cudaStream_t stream) {
+    size_t size = n * sizeof(float);
+
+    // Batch position transfers
+    if (stream != 0) {
+        CUDA_CHECK(cudaMemcpyAsync(d_pos_x, pos_x.data(), size, cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_pos_y, pos_y.data(), size, cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_pos_z, pos_z.data(), size, cudaMemcpyHostToDevice, stream));
+
+        // Batch velocity and mass transfers
+        CUDA_CHECK(cudaMemcpyAsync(d_vel_x, vel_x.data(), size, cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_vel_y, vel_y.data(), size, cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_vel_z, vel_z.data(), size, cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_mass, masses.data(), size, cudaMemcpyHostToDevice, stream));
+    } else {
+        CUDA_CHECK(cudaMemcpy(d_pos_x, pos_x.data(), size, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_pos_y, pos_y.data(), size, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_pos_z, pos_z.data(), size, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_vel_x, vel_x.data(), size, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_vel_y, vel_y.data(), size, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_vel_z, vel_z.data(), size, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_mass, masses.data(), size, cudaMemcpyHostToDevice));
+    }
+}
+
+void BodySystem::setStateFromHostAsync(const std::vector<float>& pos_x, const std::vector<float>& pos_y, const std::vector<float>& pos_z,
+                                      const std::vector<float>& vel_x, const std::vector<float>& vel_y, const std::vector<float>& vel_z,
+                                      const std::vector<float>& masses, cudaStream_t pos_stream, cudaStream_t vel_stream) {
+    size_t size = n * sizeof(float);
+
+    // Stream 1: Position transfers
+    CUDA_CHECK(cudaMemcpyAsync(d_pos_x, pos_x.data(), size, cudaMemcpyHostToDevice, pos_stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_pos_y, pos_y.data(), size, cudaMemcpyHostToDevice, pos_stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_pos_z, pos_z.data(), size, cudaMemcpyHostToDevice, pos_stream));
+
+    // Stream 2: Velocity and mass transfers
+    CUDA_CHECK(cudaMemcpyAsync(d_vel_x, vel_x.data(), size, cudaMemcpyHostToDevice, vel_stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_vel_y, vel_y.data(), size, cudaMemcpyHostToDevice, vel_stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_vel_z, vel_z.data(), size, cudaMemcpyHostToDevice, vel_stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_mass, masses.data(), size, cudaMemcpyHostToDevice, vel_stream));
+}
+
+void BodySystem::getStateToHost(std::vector<float>& pos_x, std::vector<float>& pos_y, std::vector<float>& pos_z,
+                               std::vector<float>& vel_x, std::vector<float>& vel_y, std::vector<float>& vel_z) const {
+    pos_x.resize(n); pos_y.resize(n); pos_z.resize(n);
+    vel_x.resize(n); vel_y.resize(n); vel_z.resize(n);
+
+    size_t size = n * sizeof(float);
+
+    // Batch position transfers
+    CUDA_CHECK(cudaMemcpy(pos_x.data(), d_pos_x, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(pos_y.data(), d_pos_y, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(pos_z.data(), d_pos_z, size, cudaMemcpyDeviceToHost));
+
+    // Batch velocity transfers
+    CUDA_CHECK(cudaMemcpy(vel_x.data(), d_vel_x, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(vel_y.data(), d_vel_y, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(vel_z.data(), d_vel_z, size, cudaMemcpyDeviceToHost));
+}
+
 void BodySystem::allocateParameterGradients() {
     size_t size = n * sizeof(float);
 
@@ -563,17 +626,36 @@ void DifferentiableTape::recordState(const BodySystem& bodies) {
     states.push_back(std::move(state));
 }
 
+void DifferentiableTape::recordStateAsync(const BodySystem& bodies, cudaStream_t stream) {
+    SimulationState state;
+    state.pos_x.resize(bodies.n);
+    state.pos_y.resize(bodies.n);
+    state.pos_z.resize(bodies.n);
+    state.vel_x.resize(bodies.n);
+    state.vel_y.resize(bodies.n);
+    state.vel_z.resize(bodies.n);
+
+    size_t size = bodies.n * sizeof(float);
+
+    // Batch position transfers
+    CUDA_CHECK(cudaMemcpyAsync(state.pos_x.data(), bodies.d_pos_x, size, cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(state.pos_y.data(), bodies.d_pos_y, size, cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(state.pos_z.data(), bodies.d_pos_z, size, cudaMemcpyDeviceToHost, stream));
+
+    // Batch velocity transfers
+    CUDA_CHECK(cudaMemcpyAsync(state.vel_x.data(), bodies.d_vel_x, size, cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(state.vel_y.data(), bodies.d_vel_y, size, cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(state.vel_z.data(), bodies.d_vel_z, size, cudaMemcpyDeviceToHost, stream));
+
+    states.push_back(std::move(state));
+}
+
 void DifferentiableTape::clear() {
     states.clear();
 }
 
 void Simulation::step() {
     auto start = std::chrono::high_resolution_clock::now();
-
-    // Record state for gradient computation if enabled
-    if (gradients_enabled) {
-        tape.recordState(*bodies);
-    }
 
     if (stable_forces_enabled) {
         launchComputeForcesStable(
@@ -593,6 +675,13 @@ void Simulation::step() {
             params.G,
             compute_stream
         );
+    }
+
+    // Record state AFTER force computation but BEFORE integration
+    // This ensures adjoint computation uses the same positions as forward pass
+    if (gradients_enabled) {
+        CUDA_CHECK(cudaStreamSynchronize(compute_stream));  // Ensure forces are computed
+        tape.recordState(*bodies);
     }
 
     launchIntegrate(
@@ -639,6 +728,26 @@ void Simulation::disableGradients() {
 
 void Simulation::clearTape() {
     tape.clear();
+}
+
+void Simulation::resetState() {
+    // Clear gradient tape
+    tape.clear();
+
+    // Reset timing info
+    last_step_ms = 0.0f;
+
+    // Zero all gradient arrays if allocated
+    if (bodies->d_grad_pos_x) {
+        bodies->zeroGradients();
+    }
+    if (bodies->d_grad_mass) {
+        bodies->zeroParameterGradients();
+    }
+
+    // Note: We keep all GPU memory allocations intact for reuse
+    // Note: We keep simulation parameters (num_bodies, time_step, etc.) unchanged
+    // This allows reuse of the same Simulation object with different initial conditions
 }
 
 float Simulation::computeGradients(const std::vector<float>& target_pos_x,

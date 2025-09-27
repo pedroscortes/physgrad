@@ -60,6 +60,16 @@ struct BodySystem {
                      std::vector<float>& pos_z) const;
     float computeEnergy(const SimParams& params) const;
 
+    // Optimized batch transfer methods
+    void setStateFromHost(const std::vector<float>& pos_x, const std::vector<float>& pos_y, const std::vector<float>& pos_z,
+                         const std::vector<float>& vel_x, const std::vector<float>& vel_y, const std::vector<float>& vel_z,
+                         const std::vector<float>& masses, cudaStream_t stream = 0);
+    void setStateFromHostAsync(const std::vector<float>& pos_x, const std::vector<float>& pos_y, const std::vector<float>& pos_z,
+                              const std::vector<float>& vel_x, const std::vector<float>& vel_y, const std::vector<float>& vel_z,
+                              const std::vector<float>& masses, cudaStream_t pos_stream, cudaStream_t vel_stream);
+    void getStateToHost(std::vector<float>& pos_x, std::vector<float>& pos_y, std::vector<float>& pos_z,
+                       std::vector<float>& vel_x, std::vector<float>& vel_y, std::vector<float>& vel_z) const;
+
     // Gradient methods
     void allocateGradients();
     void zeroGradients();
@@ -88,6 +98,7 @@ struct SimulationState {
 class DifferentiableTape {
 public:
     void recordState(const BodySystem& bodies);
+    void recordStateAsync(const BodySystem& bodies, cudaStream_t stream);
     void clear();
     size_t size() const { return states.size(); }
     const SimulationState& getState(size_t index) const { return states[index]; }
@@ -112,6 +123,7 @@ public:
     void enableGradients();
     void disableGradients();
     void clearTape();
+    void resetState();  // Reset simulation state for reuse instead of object recreation
     float computeGradients(const std::vector<float>& target_pos_x,
                           const std::vector<float>& target_pos_y,
                           const std::vector<float>& target_pos_z);
