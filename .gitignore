@@ -1,6 +1,7 @@
 # Build artifacts
 physgrad
 physgrad_console
+physgrad_*
 *.o
 src/*.o
 
@@ -29,3 +30,6 @@ tests/test_*
 !tests/*.cpp
 !tests/*.cu
 !tests/Makefile
+
+# Documentation and planning
+tech_debt.md

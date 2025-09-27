@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <vector>
 #include <memory>
+#include "stability_improvements.h"
 
 namespace physgrad {
 
@@ -15,6 +16,8 @@ struct SimParams {
     float G = 1.0f;
     float cluster_scale = 1.0f;
     float velocity_scale = 0.5f;
+    float max_force = 100.0f;  // Maximum force magnitude for stability
+    StabilityParams stability;
 };
 
 struct BodySystem {
@@ -38,6 +41,12 @@ struct BodySystem {
     float* d_grad_vel_y = nullptr;
     float* d_grad_vel_z = nullptr;
 
+    // Parameter gradients
+    float* d_grad_mass = nullptr;     // Gradient w.r.t. masses
+    float* d_grad_G = nullptr;        // Gradient w.r.t. gravitational constant (scalar)
+    float* d_grad_epsilon = nullptr;  // Gradient w.r.t. softening parameter (scalar)
+    float* d_grad_dt = nullptr;       // Gradient w.r.t. time step (scalar)
+
     int n;
 
     BodySystem(int num_bodies);
@@ -58,6 +67,17 @@ struct BodySystem {
     void getGradients(std::vector<float>& grad_pos_x,
                      std::vector<float>& grad_pos_y,
                      std::vector<float>& grad_pos_z) const;
+
+    // Parameter gradient methods
+    void allocateParameterGradients();
+    void zeroParameterGradients();
+    void getParameterGradients(std::vector<float>& grad_mass,
+                              float& grad_G,
+                              float& grad_epsilon) const;
+    void getParameterGradientsWithTime(std::vector<float>& grad_mass,
+                                      float& grad_G,
+                                      float& grad_epsilon,
+                                      float& grad_dt) const;
 };
 
 struct SimulationState {
@@ -96,6 +116,27 @@ public:
                           const std::vector<float>& target_pos_y,
                           const std::vector<float>& target_pos_z);
 
+    // Parameter differentiation
+    void enableParameterGradients(bool enable = true);
+    float computeParameterGradients(const std::vector<float>& target_pos_x,
+                                   const std::vector<float>& target_pos_y,
+                                   const std::vector<float>& target_pos_z,
+                                   std::vector<float>& grad_mass,
+                                   float& grad_G,
+                                   float& grad_epsilon);
+
+    float computeParameterGradientsWithTime(const std::vector<float>& target_pos_x,
+                                           const std::vector<float>& target_pos_y,
+                                           const std::vector<float>& target_pos_z,
+                                           std::vector<float>& grad_mass,
+                                           float& grad_G,
+                                           float& grad_epsilon,
+                                           float& grad_dt);
+
+    // Numerical stability
+    void enableStableForces(bool enable = true);
+    void stabilizeGradients();
+
 private:
     SimParams params;
     std::unique_ptr<BodySystem> bodies;
@@ -106,13 +147,22 @@ private:
 
     // Differentiable state
     bool gradients_enabled = false;
+    bool parameter_gradients_enabled = false;
     DifferentiableTape tape;
+
+    // Stability state
+    bool stable_forces_enabled = false;
 };
 
 void launchComputeForces(float* d_acc_x, float* d_acc_y, float* d_acc_z,
                         const float* d_pos_x, const float* d_pos_y, const float* d_pos_z,
                         const float* d_mass, int n, float epsilon, float G,
                         cudaStream_t stream = 0);
+
+void launchComputeForcesStable(float* d_acc_x, float* d_acc_y, float* d_acc_z,
+                              const float* d_pos_x, const float* d_pos_y, const float* d_pos_z,
+                              const float* d_mass, int n, float epsilon, float G,
+                              float max_force, cudaStream_t stream = 0);
 
 void launchIntegrate(float* d_pos_x, float* d_pos_y, float* d_pos_z,
                     float* d_vel_x, float* d_vel_y, float* d_vel_z,
@@ -127,9 +177,18 @@ void launchComputeForcesAdjoint(
     const float* d_mass, int n, float epsilon, float G,
     cudaStream_t stream = 0);
 
+// Parameter gradient kernels
+void launchComputeForcesParameterAdjoint(
+    float* d_grad_mass, float* d_grad_G, float* d_grad_epsilon,
+    const float* d_grad_acc_x, const float* d_grad_acc_y, const float* d_grad_acc_z,
+    const float* d_pos_x, const float* d_pos_y, const float* d_pos_z,
+    const float* d_mass, int n, float epsilon, float G,
+    cudaStream_t stream = 0);
+
 void launchIntegrateAdjoint(
     float* d_grad_pos_x, float* d_grad_pos_y, float* d_grad_pos_z,
     float* d_grad_vel_x, float* d_grad_vel_y, float* d_grad_vel_z,
+    float* d_grad_acc_x, float* d_grad_acc_y, float* d_grad_acc_z,
     const float* d_grad_pos_next_x, const float* d_grad_pos_next_y, const float* d_grad_pos_next_z,
     const float* d_grad_vel_next_x, const float* d_grad_vel_next_y, const float* d_grad_vel_next_z,
     int n, float dt, cudaStream_t stream = 0);
