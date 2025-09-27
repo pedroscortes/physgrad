@@ -1,0 +1,31 @@
+# Build artifacts
+physgrad
+physgrad_console
+*.o
+src/*.o
+
+# Build directories
+build/
+cmake-build-*/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# CUDA runtime
+*.fatbin
+*.cubin
+*.ptx
+
+# Test outputs
+tests/test_*
+!tests/*.cpp
+!tests/*.cu
+!tests/Makefile
