@@ -58,7 +58,7 @@ __global__ void computeForcesBruteForce(
     acc_z[i] = az;
 }
 
-__global__ void integrateEuler(
+__global__ void integrateLeapfrog(
     float* pos_x, float* pos_y, float* pos_z,
     float* vel_x, float* vel_y, float* vel_z,
     const float* acc_x, const float* acc_y, const float* acc_z,
@@ -67,10 +67,12 @@ __global__ void integrateEuler(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
 
+    // Leapfrog-Verlet: v(t+dt/2) = v(t-dt/2) + a(t)*dt
     vel_x[i] += acc_x[i] * dt;
     vel_y[i] += acc_y[i] * dt;
     vel_z[i] += acc_z[i] * dt;
 
+    // x(t+dt) = x(t) + v(t+dt/2)*dt
     pos_x[i] += vel_x[i] * dt;
     pos_y[i] += vel_y[i] * dt;
     pos_z[i] += vel_z[i] * dt;
@@ -306,7 +308,7 @@ void launchIntegrate(float* d_pos_x, float* d_pos_y, float* d_pos_z,
     int threads = 256;
     int blocks = (n + threads - 1) / threads;
 
-    integrateEuler<<<blocks, threads, 0, stream>>>(
+    integrateLeapfrog<<<blocks, threads, 0, stream>>>(
         d_pos_x, d_pos_y, d_pos_z,
         d_vel_x, d_vel_y, d_vel_z,
         d_acc_x, d_acc_y, d_acc_z,
