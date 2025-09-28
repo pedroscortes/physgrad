@@ -1,0 +1,195 @@
+[build-system]
+requires = [
+    "setuptools>=64",
+    "wheel",
+    "pybind11>=2.10.0",
+    "torch>=1.12.0",
+    "numpy>=1.20.0"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "physgrad"
+version = "0.1.0"
+description = "Differentiable Physics Simulation with GPU Acceleration"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "PhysGrad Team", email = "contact@physgrad.ai"}
+]
+maintainers = [
+    {name = "PhysGrad Team", email = "contact@physgrad.ai"}
+]
+keywords = ["physics", "simulation", "gpu", "cuda", "pytorch", "jax", "differentiable"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C++",
+    "Programming Language :: CUDA",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.8.0",
+    "matplotlib>=3.5.0"
+]
+
+[project.optional-dependencies]
+pytorch = [
+    "torch>=1.12.0"
+]
+jax = [
+    "jax>=0.3.0",
+    "jaxlib>=0.3.0"
+]
+visualization = [
+    "plotly>=5.0.0",
+    "dash>=2.0.0"
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=0.950",
+    "pre-commit>=2.20.0"
+]
+docs = [
+    "sphinx>=4.5.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "myst-parser>=0.18.0"
+]
+examples = [
+    "jupyter>=1.0.0",
+    "opencv-python>=4.5.0",
+    "tqdm>=4.60.0"
+]
+all = [
+    "physgrad[pytorch,jax,visualization,examples]"
+]
+
+[project.urls]
+Homepage = "https://github.com/physgrad/physgrad"
+Documentation = "https://physgrad.readthedocs.io"
+Repository = "https://github.com/physgrad/physgrad"
+"Bug Reports" = "https://github.com/physgrad/physgrad/issues"
+Changelog = "https://github.com/physgrad/physgrad/blob/main/CHANGELOG.md"
+
+[project.scripts]
+physgrad-benchmark = "physgrad.cli:benchmark_command"
+physgrad-demo = "physgrad.cli:demo_command"
+
+[tool.setuptools]
+packages = ["physgrad"]
+package-dir = {"" = "."}
+include-package-data = true
+
+[tool.setuptools.package-data]
+physgrad = ["*.so", "*.dll", "*.dylib"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [".git", "__pycache__", "build", "dist", ".eggs"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "jax.*",
+    "numpy.*",
+    "scipy.*",
+    "matplotlib.*",
+    "plotly.*",
+    "dash.*"
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "--cov=physgrad",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml"
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests that require GPU",
+    "integration: marks tests as integration tests",
+    "pytorch: marks tests that require PyTorch",
+    "jax: marks tests that require JAX"
+]
+
+[tool.coverage.run]
+source = ["physgrad"]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+    "setup.py"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod"
+]

@@ -7,7 +7,6 @@
 
 namespace physgrad {
 
-// Configuration parameters
 struct SimParams {
     int num_bodies = 1024;
     float time_step = 0.001f;
@@ -16,12 +15,11 @@ struct SimParams {
     float G = 1.0f;
     float cluster_scale = 1.0f;
     float velocity_scale = 0.5f;
-    float max_force = 100.0f;  // Maximum force magnitude for stability
+    float max_force = 100.0f;
     StabilityParams stability;
 };
 
 struct BodySystem {
-    // Forward state
     float* d_pos_x = nullptr;
     float* d_pos_y = nullptr;
     float* d_pos_z = nullptr;
@@ -33,7 +31,6 @@ struct BodySystem {
     float* d_acc_z = nullptr;
     float* d_mass = nullptr;
 
-    // Gradient state (adjoints)
     float* d_grad_pos_x = nullptr;
     float* d_grad_pos_y = nullptr;
     float* d_grad_pos_z = nullptr;
@@ -41,11 +38,10 @@ struct BodySystem {
     float* d_grad_vel_y = nullptr;
     float* d_grad_vel_z = nullptr;
 
-    // Parameter gradients
-    float* d_grad_mass = nullptr;     // Gradient w.r.t. masses
-    float* d_grad_G = nullptr;        // Gradient w.r.t. gravitational constant (scalar)
-    float* d_grad_epsilon = nullptr;  // Gradient w.r.t. softening parameter (scalar)
-    float* d_grad_dt = nullptr;       // Gradient w.r.t. time step (scalar)
+    float* d_grad_mass = nullptr;
+    float* d_grad_G = nullptr;
+    float* d_grad_epsilon = nullptr;
+    float* d_grad_dt = nullptr;
 
     int n;
 

@@ -1,0 +1,30 @@
+# Include package data
+include README.md
+include LICENSE
+include requirements.txt
+include CHANGELOG.md
+
+# Include source files
+recursive-include physgrad *.py
+recursive-include src *.cpp *.h *.cu
+
+# Include headers from parent directory
+recursive-include ../src *.h *.cu *.cpp
+
+# Include examples and documentation
+recursive-include examples *.py *.md *.ipynb
+recursive-include docs *.md *.rst *.py
+
+# Include test files
+recursive-include tests *.py
+
+# Exclude development and build files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude .git*
+global-exclude .pytest_cache
+global-exclude build
+global-exclude dist
+global-exclude *.egg-info

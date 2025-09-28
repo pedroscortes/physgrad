@@ -9,6 +9,14 @@ src/*.o
 build/
 cmake-build-*/
 
+# Python build artifacts
+python/build/
+python/dist/
+python/*.egg-info/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
 # IDE files
 .vscode/
 .idea/
@@ -30,6 +38,3 @@ tests/test_*
 !tests/*.cpp
 !tests/*.cu
 !tests/Makefile
-
-# Documentation and planning
-tech_debt.md
