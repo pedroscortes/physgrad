@@ -21,6 +21,10 @@ try:
     _PLOTLY_AVAILABLE = True
 except ImportError:
     _PLOTLY_AVAILABLE = False
+    # Dummy placeholders for type hints when not available
+    class dash:
+        class Dash:
+            pass
 
 from .core import Simulation, Particle, RigidBody
 
@@ -657,8 +661,12 @@ def visualize_simulation(simulation: Simulation, visualizer_type: str = "matplot
                         real_time: bool = True, max_steps: Optional[int] = None):
     """Quick visualization setup for a simulation."""
     if real_time:
-        viz = RealTimeVisualizer(simulation, visualizer_type=visualizer_type)
-        viz.run(max_steps=max_steps)
+        if visualizer_type == "opengl" or visualizer_type == "realtime":
+            # Use the built-in real-time OpenGL/ImGui visualizer
+            simulation.run_with_visualization(max_steps=max_steps)
+        else:
+            viz = RealTimeVisualizer(simulation, visualizer_type=visualizer_type)
+            viz.run(max_steps=max_steps)
     else:
         if visualizer_type == "matplotlib":
             viz = MatplotlibVisualizer(simulation)
@@ -673,3 +681,74 @@ def visualize_simulation(simulation: Simulation, visualizer_type: str = "matplot
             viz.update()
             viz.render()
         viz.stop()
+
+
+def quick_realtime_demo(num_particles: int = 50, demo_type: str = "bouncing_balls"):
+    """Create a quick real-time visualization demo.
+
+    Args:
+        num_particles: Number of particles to simulate
+        demo_type: Type of demo ("bouncing_balls", "pendulum", "fountain")
+    """
+    from .core import Simulation, SimulationConfig, Particle
+    from .physics import GravityForce, DampingForce, DistanceConstraint
+    import numpy as np
+
+    if demo_type == "bouncing_balls":
+        config = SimulationConfig(
+            num_particles=num_particles,
+            dt=0.01,
+            enable_gpu=True,
+            domain_size=[10.0, 10.0, 10.0]
+        )
+
+        sim = Simulation(config)
+
+        # Add bouncing balls
+        particles = []
+        for i in range(num_particles):
+            pos = np.random.uniform(-4, 4, 3)
+            pos[1] = np.random.uniform(2, 8)  # Start in upper half
+            vel = np.random.uniform(-1, 1, 3)
+            mass = np.random.uniform(0.5, 2.0)
+
+            particle = Particle(position=pos, velocity=vel, mass=mass)
+            particles.append(particle)
+
+        sim.add_particles(particles)
+        sim.add_force(GravityForce(gravity=[0, -9.81, 0]))
+        sim.add_force(DampingForce(damping_coefficient=0.05))
+
+    elif demo_type == "pendulum":
+        config = SimulationConfig(
+            num_particles=num_particles,
+            dt=0.005,
+            enable_gpu=False,
+            domain_size=[6.0, 6.0, 6.0],
+            enable_constraints=True
+        )
+
+        sim = Simulation(config)
+
+        # Create pendulums
+        for i in range(num_particles // 2):
+            x_offset = (i - num_particles // 4) * 1.0
+
+            anchor = Particle(position=[x_offset, 3.0, 0.0], mass=1.0, fixed=True)
+            bob = Particle(position=[x_offset + 1.0, 1.0, 0.0], mass=1.0)
+
+            anchor_id = sim.add_particle(anchor)
+            bob_id = sim.add_particle(bob)
+
+            constraint = DistanceConstraint(anchor_id, bob_id, distance=2.0, stiffness=10000.0)
+            sim.add_constraint(constraint)
+
+        sim.add_force(GravityForce(gravity=[0, -9.81, 0]))
+        sim.add_force(DampingForce(damping_coefficient=0.02))
+
+    else:
+        raise ValueError(f"Unknown demo type: {demo_type}")
+
+    # Run with real-time visualization
+    print(f"🚀 Starting {demo_type} demo with {num_particles} particles...")
+    sim.run_with_visualization(max_steps=5000)

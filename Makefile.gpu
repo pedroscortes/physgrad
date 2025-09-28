@@ -1,0 +1,93 @@
+# GPU-Accelerated Variational Contact Makefile
+CXX = g++
+NVCC = nvcc
+
+# Compiler flags
+CXXFLAGS = -std=c++17 -O3 -Wall -I/usr/include/eigen3
+NVCCFLAGS = -std=c++17 -O3 -arch=sm_70 -I/usr/include/eigen3
+
+# CUDA libraries
+CUDA_LIBS = -lcudart -lcublas -lcusparse -lcurand
+
+# Source files
+CPU_SOURCES = src/variational_contact.cpp
+GPU_SOURCES = src/variational_contact_kernels.cu src/variational_contact_gpu.cu
+HEADERS = src/variational_contact.h src/variational_contact_gpu.h src/variational_contact_gpu.cuh
+
+# Object files
+CPU_OBJECTS = $(CPU_SOURCES:.cpp=.o)
+GPU_OBJECTS = $(GPU_SOURCES:.cu=.o)
+
+# Test executables
+GPU_TEST = test_gpu_acceleration
+CPU_TEST = test_stability_fix
+
+.PHONY: all clean gpu cpu test
+
+all: gpu cpu
+
+gpu: $(GPU_TEST)
+
+cpu: $(CPU_TEST)
+
+# GPU test compilation
+$(GPU_TEST): test_gpu_acceleration.cpp $(CPU_OBJECTS) $(GPU_OBJECTS)
+	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(CUDA_LIBS)
+
+# CPU test compilation (fallback)
+$(CPU_TEST): test_stability_fix.cpp $(CPU_OBJECTS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+# CPU object files
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# GPU object files
+%.o: %.cu
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+# Test target
+test: $(GPU_TEST)
+	@echo "Testing GPU availability..."
+	@nvidia-smi || echo "NVIDIA GPU not detected - tests may run on CPU fallback"
+	@echo "Running GPU acceleration tests..."
+	./$(GPU_TEST)
+
+# Performance benchmark
+benchmark: $(GPU_TEST)
+	@echo "Running comprehensive GPU vs CPU benchmark..."
+	@echo "This may take several minutes for large problem sizes..."
+	./$(GPU_TEST)
+
+# Clean build artifacts
+clean:
+	rm -f $(CPU_OBJECTS) $(GPU_OBJECTS) $(GPU_TEST) $(CPU_TEST)
+	rm -f src/*.o
+
+# Development helpers
+check-cuda:
+	@echo "Checking CUDA installation..."
+	@nvcc --version || echo "CUDA compiler not found"
+	@nvidia-smi || echo "NVIDIA GPU driver not found"
+
+info:
+	@echo "GPU-Accelerated Variational Contact System"
+	@echo "=========================================="
+	@echo "Targets:"
+	@echo "  all       - Build both GPU and CPU versions"
+	@echo "  gpu       - Build GPU-accelerated version"
+	@echo "  cpu       - Build CPU-only version"
+	@echo "  test      - Run GPU acceleration tests"
+	@echo "  benchmark - Run comprehensive performance benchmark"
+	@echo "  clean     - Remove build artifacts"
+	@echo "  check-cuda- Check CUDA installation"
+	@echo ""
+	@echo "Requirements:"
+	@echo "  - CUDA Toolkit (>=11.0)"
+	@echo "  - NVIDIA GPU with Compute Capability >= 7.0"
+	@echo "  - Eigen3 library"
+	@echo "  - C++17 compatible compiler"
+
+# Dependency tracking
+$(CPU_OBJECTS): $(HEADERS)
+$(GPU_OBJECTS): $(HEADERS)

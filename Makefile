@@ -4,12 +4,12 @@ CUDA_PATH = /usr/local/cuda
 
 NVCC_FLAGS = -std=c++17 --use_fast_math -lineinfo --extended-lambda -arch=sm_75
 CXX_FLAGS = -std=c++17 -O3 -Wall
-INCLUDES = -I$(CUDA_PATH)/include -I./src
+INCLUDES = -I$(CUDA_PATH)/include -I./src -I/usr/include/eigen3
 LIBS = -L$(CUDA_PATH)/lib64 -lcudart
 
-SOURCES_CUDA = src/simulation.cu src/stability_improvements.cu src/multi_gpu.cu src/domain_decomposition.cu src/gpu_communication.cu src/load_balancer.cu
-SOURCES_CPP = src/visualization.cpp src/collision_detection.cpp src/constraints.cpp src/differentiable_contact.cpp src/rigid_body.cpp src/symplectic_integrators.cpp
-SOURCES_TESTS = tests/run_tests.cpp tests/test_physics.cpp tests/test_differentiable_contact.cpp tests/test_rigid_body.cpp tests/test_symplectic_integrators.cpp tests/test_constraints.cpp tests/test_collision_detection.cpp
+SOURCES_CUDA = src/simulation.cu src/stability_improvements.cu
+SOURCES_CPP = src/collision_detection.cpp src/constraints.cpp src/differentiable_contact.cpp src/rigid_body.cpp src/symplectic_integrators.cpp src/variational_contact.cpp
+SOURCES_TESTS = tests/run_tests.cpp tests/test_physics.cpp tests/test_differentiable_contact.cpp tests/test_rigid_body.cpp tests/test_symplectic_integrators.cpp tests/test_constraints.cpp tests/test_collision_detection.cpp tests/test_variational_contact.cpp
 
 OBJECTS_CUDA = $(SOURCES_CUDA:.cu=.o)
 OBJECTS_CPP = $(SOURCES_CPP:.cpp=.o)

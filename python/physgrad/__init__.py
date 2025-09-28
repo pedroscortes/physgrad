@@ -64,6 +64,15 @@ from .physics import (
     Yoshida4
 )
 
+# Variational contact mechanics (advanced physics)
+from .variational_contact import (
+    VariationalContactParams,
+    VariationalContactSolver,
+    VariationalContactIntegrator,
+    create_contact_scenario,
+    quick_simulation as variational_quick_simulation
+)
+
 # Multi-GPU support
 from .multigpu import (
     MultiGPUSimulation,
@@ -77,7 +86,9 @@ from .visualization import (
     Visualizer,
     RealTimeVisualizer,
     InteractiveControls,
-    MathematicalOverlay
+    MathematicalOverlay,
+    visualize_simulation,
+    quick_realtime_demo
 )
 
 # Automatic differentiation
@@ -137,7 +148,8 @@ FEATURES = {
     "pytorch": _TORCH_AVAILABLE and (_CPP_AVAILABLE and physgrad_cpp.pytorch_available if _CPP_AVAILABLE else False),
     "jax": _JAX_AVAILABLE and (_CPP_AVAILABLE and physgrad_cpp.jax_available if _CPP_AVAILABLE else False),
     "multi_gpu": _CPP_AVAILABLE,
-    "visualization": True,  # Pure Python implementation
+    "visualization": True,  # Pure Python implementation (matplotlib/plotly)
+    "realtime_visualization": _CPP_AVAILABLE,  # OpenGL/ImGui real-time visualization
     "autodiff": True       # Pure Python implementation
 }
 
@@ -270,6 +282,10 @@ __all__ = [
     "Force", "GravityForce", "SpringForce", "DampingForce", "CustomForce",
     "Constraint", "DistanceConstraint", "SpringConstraint", "PositionConstraint",
     "Integrator", "SymplecticEuler", "VelocityVerlet", "ForestRuth", "Yoshida4",
+
+    # Variational contact mechanics
+    "VariationalContactParams", "VariationalContactSolver", "VariationalContactIntegrator",
+    "create_contact_scenario", "variational_quick_simulation",
 
     # Multi-GPU
     "MultiGPUSimulation", "GPUManager", "PartitioningStrategy", "CommunicationPattern",

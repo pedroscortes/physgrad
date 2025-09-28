@@ -1,9 +1,4 @@
-"""
-Core simulation classes and configuration for PhysGrad.
-
-This module provides the main simulation interface and configuration classes
-that users interact with for setting up and running physics simulations.
-"""
+"""Core simulation classes and configuration for PhysGrad."""
 
 import numpy as np
 from typing import Optional, List, Tuple, Dict, Any, Union, Callable
@@ -20,7 +15,6 @@ except ImportError:
 
 
 class IntegratorType(Enum):
-    """Available numerical integration schemes."""
     SYMPLECTIC_EULER = "symplectic_euler"
     VELOCITY_VERLET = "velocity_verlet"
     FOREST_RUTH = "forest_ruth"
@@ -29,7 +23,6 @@ class IntegratorType(Enum):
 
 
 class DeviceType(Enum):
-    """Available compute devices."""
     CPU = "cpu"
     CUDA = "cuda"
     AUTO = "auto"
@@ -37,11 +30,6 @@ class DeviceType(Enum):
 
 @dataclass
 class SimulationConfig:
-    """Configuration for physics simulation.
-
-    This class contains all the parameters needed to configure a physics simulation,
-    including numerical integration settings, physical parameters, and computational options.
-    """
     # Simulation parameters
     num_particles: int = 1000
     dt: float = 0.01
@@ -75,7 +63,6 @@ class SimulationConfig:
     log_level: str = "INFO"
 
     def __post_init__(self):
-        """Validate configuration parameters."""
         if self.num_particles <= 0:
             raise ValueError("num_particles must be positive")
         if self.dt <= 0:
@@ -83,7 +70,6 @@ class SimulationConfig:
         if any(d <= 0 for d in self.domain_size):
             raise ValueError("domain_size dimensions must be positive")
 
-        # Auto-detect device if needed
         if self.device == DeviceType.AUTO:
             if _CPP_AVAILABLE and physgrad_cpp.cuda_available and self.enable_gpu:
                 self.device = DeviceType.CUDA
@@ -93,16 +79,14 @@ class SimulationConfig:
 
 @dataclass
 class Material:
-    """Material properties for particles and rigid bodies."""
     density: float = 1000.0  # kg/m³
     restitution: float = 0.5  # Coefficient of restitution
     friction: float = 0.3     # Coefficient of friction
-    viscosity: float = 0.0    # Fluid viscosity
+    viscosity: float = 0.0
     thermal_conductivity: float = 0.0
     name: str = "default"
 
     def __post_init__(self):
-        """Validate material properties."""
         if self.density <= 0:
             raise ValueError("density must be positive")
         if not 0 <= self.restitution <= 1:
@@ -113,7 +97,6 @@ class Material:
 
 @dataclass
 class Particle:
-    """Individual particle in the simulation."""
     position: np.ndarray = field(default_factory=lambda: np.zeros(3))
     velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
     acceleration: np.ndarray = field(default_factory=lambda: np.zeros(3))
@@ -124,7 +107,6 @@ class Particle:
     id: int = -1
 
     def __post_init__(self):
-        """Validate particle properties."""
         self.position = np.asarray(self.position, dtype=np.float32)
         self.velocity = np.asarray(self.velocity, dtype=np.float32)
         self.acceleration = np.asarray(self.acceleration, dtype=np.float32)
@@ -141,21 +123,18 @@ class Particle:
             raise ValueError("radius must be positive")
 
     def kinetic_energy(self) -> float:
-        """Calculate kinetic energy of the particle."""
         return 0.5 * self.mass * np.dot(self.velocity, self.velocity)
 
     def momentum(self) -> np.ndarray:
-        """Calculate momentum of the particle."""
         return self.mass * self.velocity
 
 
 @dataclass
 class RigidBody:
-    """Rigid body composed of multiple particles or with continuous mass distribution."""
     center_of_mass: np.ndarray = field(default_factory=lambda: np.zeros(3))
     velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
     angular_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    orientation: np.ndarray = field(default_factory=lambda: np.array([1, 0, 0, 0]))  # quaternion
+    orientation: np.ndarray = field(default_factory=lambda: np.array([1, 0, 0, 0]))
     mass: float = 1.0
     inertia_tensor: np.ndarray = field(default_factory=lambda: np.eye(3))
     material: Material = field(default_factory=Material)
@@ -165,7 +144,6 @@ class RigidBody:
     id: int = -1
 
     def __post_init__(self):
-        """Validate rigid body properties."""
         self.center_of_mass = np.asarray(self.center_of_mass, dtype=np.float32)
         self.velocity = np.asarray(self.velocity, dtype=np.float32)
         self.angular_velocity = np.asarray(self.angular_velocity, dtype=np.float32)
@@ -173,14 +151,12 @@ class RigidBody:
         self.inertia_tensor = np.asarray(self.inertia_tensor, dtype=np.float32)
         self.dimensions = np.asarray(self.dimensions, dtype=np.float32)
 
-        # Normalize quaternion
         self.orientation = self.orientation / np.linalg.norm(self.orientation)
 
         if self.mass <= 0:
             raise ValueError("mass must be positive")
 
     def total_energy(self) -> float:
-        """Calculate total kinetic energy (translational + rotational)."""
         translational = 0.5 * self.mass * np.dot(self.velocity, self.velocity)
         rotational = 0.5 * np.dot(self.angular_velocity,
                                  np.dot(self.inertia_tensor, self.angular_velocity))
@@ -189,11 +165,10 @@ class RigidBody:
 
 @dataclass
 class Environment:
-    """Global environment settings for the simulation."""
     gravity: np.ndarray = field(default_factory=lambda: np.array([0, -9.81, 0]))
-    air_density: float = 1.225  # kg/m³
-    temperature: float = 293.15  # K
-    pressure: float = 101325.0   # Pa
+    air_density: float = 1.225
+    temperature: float = 293.15
+    pressure: float = 101325.0
     wind_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
     boundaries: Dict[str, Any] = field(default_factory=dict)
 
@@ -227,18 +202,17 @@ class Simulation:
         self.time = 0.0
         self.step_count = 0
 
-        # Initialize containers
         self.particles: List[Particle] = []
         self.rigid_bodies: List[RigidBody] = []
         self.environment = Environment()
 
-        # Initialize backend
+        self.forces: List['Force'] = []
+        self.constraints: List['Constraint'] = []
+
         self._initialize_backend()
 
-        # Storage for trajectory data
         self.trajectory_data = [] if config.save_trajectory else None
 
-        # Performance tracking
         self.performance_stats = {
             "total_time": 0.0,
             "average_step_time": 0.0,
@@ -246,10 +220,11 @@ class Simulation:
             "last_step_time": 0.0
         }
 
+        self._visualizer = None
+        self._visualization_enabled = False
+
     def _initialize_backend(self):
-        """Initialize the computational backend."""
         if _CPP_AVAILABLE and self.config.device != DeviceType.CPU:
-            # Initialize C++ backend
             params = physgrad_cpp.SimulationParams()
             params.dt = self.config.dt
             params.num_particles = self.config.num_particles
@@ -267,52 +242,46 @@ class Simulation:
                 warnings.warn("CUDA requested but not available, falling back to CPU")
 
     def add_particle(self, particle: Particle) -> int:
-        """Add a particle to the simulation.
-
-        Args:
-            particle: Particle to add
-
-        Returns:
-            Particle ID
-        """
         particle.id = len(self.particles)
         self.particles.append(particle)
 
         if self._use_cpp and len(self.particles) == 1:
-            # Initialize C++ simulation with first particle
             self._cpp_sim.initialize()
 
         return particle.id
 
     def add_particles(self, particles: List[Particle]) -> List[int]:
-        """Add multiple particles to the simulation.
-
-        Args:
-            particles: List of particles to add
-
-        Returns:
-            List of particle IDs
-        """
         ids = []
         for particle in particles:
             ids.append(self.add_particle(particle))
         return ids
 
     def add_rigid_body(self, rigid_body: RigidBody) -> int:
-        """Add a rigid body to the simulation.
-
-        Args:
-            rigid_body: Rigid body to add
-
-        Returns:
-            Rigid body ID
-        """
         rigid_body.id = len(self.rigid_bodies)
         self.rigid_bodies.append(rigid_body)
         return rigid_body.id
 
+    def add_force(self, force: 'Force') -> None:
+        self.forces.append(force)
+
+    def remove_force(self, force: 'Force') -> bool:
+        try:
+            self.forces.remove(force)
+            return True
+        except ValueError:
+            return False
+
+    def add_constraint(self, constraint: 'Constraint') -> None:
+        self.constraints.append(constraint)
+
+    def remove_constraint(self, constraint: 'Constraint') -> bool:
+        try:
+            self.constraints.remove(constraint)
+            return True
+        except ValueError:
+            return False
+
     def step(self) -> None:
-        """Advance simulation by one time step."""
         import time
         start_time = time.time()
 
@@ -380,18 +349,43 @@ class Simulation:
 
     def _step_python(self) -> None:
         """Perform simulation step using pure Python backend."""
-        # Simple Euler integration for Python fallback
-        for particle in self.particles:
-            if not particle.fixed:
-                # Apply gravity
-                particle.acceleration = np.array(self.environment.gravity)
+        # Collect all forces
+        total_forces = {}
 
-                # Simple damping
-                particle.acceleration -= self.config.damping * particle.velocity
+        # Apply all forces in the system
+        for force in self.forces:
+            if force.enabled:
+                force_dict = force.compute_force(self.particles, self.rigid_bodies, self.time)
+                for particle_id, force_vec in force_dict.items():
+                    if particle_id in total_forces:
+                        total_forces[particle_id] += force_vec
+                    else:
+                        total_forces[particle_id] = force_vec.copy()
 
-                # Update velocity and position
-                particle.velocity += particle.acceleration * self.config.dt
-                particle.position += particle.velocity * self.config.dt
+        # Apply all constraints
+        for constraint in self.constraints:
+            if constraint.enabled:
+                constraint_forces = constraint.compute_constraint_force(
+                    self.particles, self.rigid_bodies, self.config.dt
+                )
+                for particle_id, force_vec in constraint_forces.items():
+                    if particle_id in total_forces:
+                        total_forces[particle_id] += force_vec
+                    else:
+                        total_forces[particle_id] = force_vec.copy()
+
+        # Store forces for visualization
+        if self.particles:
+            forces_array = np.zeros((len(self.particles), 3))
+            for i, particle in enumerate(self.particles):
+                if particle.id in total_forces:
+                    forces_array[i] = total_forces[particle.id]
+            self._last_forces = forces_array
+
+        # Integrate particles using symplectic Euler
+        from .physics import SymplecticEuler
+        integrator = SymplecticEuler()
+        integrator.integrate(self.particles, self.rigid_bodies, total_forces, self.config.dt)
 
     def _save_trajectory_step(self) -> None:
         """Save current state to trajectory data."""
@@ -540,3 +534,115 @@ class Simulation:
 
         # Reinitialize backend with loaded config
         self._initialize_backend()
+
+    def enable_visualization(self, width: int = 1280, height: int = 720) -> bool:
+        """Enable real-time OpenGL/ImGui visualization.
+
+        Args:
+            width: Window width in pixels
+            height: Window height in pixels
+
+        Returns:
+            True if visualization was successfully initialized
+        """
+        if not _CPP_AVAILABLE:
+            warnings.warn("C++ backend not available, visualization requires compiled bindings")
+            return False
+
+        try:
+            self._visualizer = physgrad_cpp.VisualizationManager()
+            if self._visualizer.initialize(width, height):
+                self._visualization_enabled = True
+                return True
+            else:
+                warnings.warn("Failed to initialize OpenGL/ImGui visualization")
+                return False
+        except Exception as e:
+            warnings.warn(f"Visualization initialization failed: {e}")
+            return False
+
+    def disable_visualization(self) -> None:
+        """Disable real-time visualization."""
+        if self._visualizer:
+            self._visualizer.shutdown()
+            self._visualizer = None
+        self._visualization_enabled = False
+
+    def update_visualization(self) -> None:
+        """Update visualization with current simulation state."""
+        if not self._visualization_enabled or not self._visualizer:
+            return
+
+        if not self.particles:
+            return
+
+        # Extract particle data
+        positions = np.array([p.position for p in self.particles])
+        velocities = np.array([p.velocity for p in self.particles])
+        masses = np.array([p.mass for p in self.particles])
+
+        # Update visualizer
+        self._visualizer.update_from_simulation(positions, velocities, masses)
+
+        # Update energy information
+        kinetic = self.get_kinetic_energy()
+        potential = self.get_potential_energy()
+        self._visualizer.update_energy(kinetic, potential)
+
+        # Update forces if available
+        if hasattr(self, '_last_forces') and self._last_forces is not None:
+            self._visualizer.update_forces(self._last_forces)
+
+    def render_visualization(self) -> None:
+        """Render one frame of visualization."""
+        if self._visualization_enabled and self._visualizer:
+            self._visualizer.render()
+
+    def should_close_visualization(self) -> bool:
+        """Check if the visualization window should close."""
+        if self._visualization_enabled and self._visualizer:
+            return self._visualizer.should_close()
+        return False
+
+    def get_visualization_params(self) -> Optional[Dict[str, Any]]:
+        """Get interactive parameters from visualization interface.
+
+        Returns:
+            Dictionary of interactive parameters or None if visualization disabled
+        """
+        if self._visualization_enabled and self._visualizer:
+            return self._visualizer.get_interactive_params()
+        return None
+
+    def run_with_visualization(self, max_steps: Optional[int] = None) -> None:
+        """Run simulation with real-time visualization.
+
+        Args:
+            max_steps: Maximum number of steps to run (None for infinite)
+        """
+        if not self._visualization_enabled:
+            if not self.enable_visualization():
+                warnings.warn("Failed to enable visualization, falling back to regular run")
+                if max_steps:
+                    self.run(max_steps)
+                return
+
+        step = 0
+        while not self.should_close_visualization():
+            if max_steps is not None and step >= max_steps:
+                break
+
+            # Check if simulation should be running from UI
+            if self._visualizer.is_simulation_running() or self._visualizer.should_single_step():
+                self.step()
+                if self._visualizer.should_single_step():
+                    self._visualizer.reset_single_step()
+
+            # Update and render visualization
+            self.update_visualization()
+            self.render_visualization()
+
+            step += 1
+
+        print(f"Simulation completed after {step} steps")
+        self.disable_visualization()

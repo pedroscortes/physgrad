@@ -1,30 +1,4 @@
-# Core dependencies
 numpy>=1.20.0
 scipy>=1.8.0
-
-# Optional ML framework dependencies
-torch>=1.12.0; extra == "pytorch"
-jax>=0.3.0; extra == "jax"
-jaxlib>=0.3.0; extra == "jax"
-
-# Visualization dependencies
 matplotlib>=3.5.0
-plotly>=5.0.0; extra == "visualization"
-dash>=2.0.0; extra == "visualization"
-
-# Development dependencies
-pytest>=7.0.0; extra == "dev"
-pytest-cov>=3.0.0; extra == "dev"
-black>=22.0.0; extra == "dev"
-flake8>=4.0.0; extra == "dev"
-mypy>=0.950; extra == "dev"
-
-# Documentation dependencies
-sphinx>=4.5.0; extra == "docs"
-sphinx-rtd-theme>=1.0.0; extra == "docs"
-myst-parser>=0.18.0; extra == "docs"
-
-# Examples dependencies
-jupyter>=1.0.0; extra == "examples"
-opencv-python>=4.5.0; extra == "examples"
-tqdm>=4.60.0; extra == "examples"
+pybind11>=2.6.0

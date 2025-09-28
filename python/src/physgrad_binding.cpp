@@ -23,9 +23,46 @@
 
 #include "tensor_interop.h"
 #include "torch_integration.h"
+#include "../../src/variational_contact.h"
+#ifdef WITH_CUDA
+#include "../../src/variational_contact_gpu.h"
+#endif
 
 namespace py = pybind11;
 using namespace physgrad;
+
+// Forward declaration of variational contact bindings
+void bind_variational_contact(py::module& m);
+
+// Helper functions for Eigen<->NumPy conversion
+std::vector<Eigen::Vector3d> numpy_to_eigen_vector3d(py::array_t<double> input) {
+    py::buffer_info buf = input.request();
+    if (buf.ndim != 2 || buf.shape[1] != 3) {
+        throw std::runtime_error("Expected array shape (N, 3)");
+    }
+
+    double* ptr = static_cast<double*>(buf.ptr);
+    std::vector<Eigen::Vector3d> result;
+    result.reserve(buf.shape[0]);
+
+    for (size_t i = 0; i < buf.shape[0]; ++i) {
+        result.emplace_back(ptr[i*3 + 0], ptr[i*3 + 1], ptr[i*3 + 2]);
+    }
+    return result;
+}
+
+py::array_t<double> eigen_vector3d_to_numpy(const std::vector<Eigen::Vector3d>& input) {
+    auto result = py::array_t<double>({input.size(), 3});
+    py::buffer_info buf = result.request();
+    double* ptr = static_cast<double*>(buf.ptr);
+
+    for (size_t i = 0; i < input.size(); ++i) {
+        ptr[i*3 + 0] = input[i][0];
+        ptr[i*3 + 1] = input[i][1];
+        ptr[i*3 + 2] = input[i][2];
+    }
+    return result;
+}
 
 // Helper function to convert between numpy and std::vector
 template<typename T>
@@ -318,6 +355,9 @@ PYBIND11_MODULE(physgrad_cpp, m) {
 
     
 
+    // Bind variational contact system
+    bind_variational_contact(m);
+
     m.attr("__version__") = "0.1.0";
     m.attr("cuda_available") = true;
 
@@ -331,5 +371,129 @@ PYBIND11_MODULE(physgrad_cpp, m) {
     m.attr("jax_available") = true;
 #else
     m.attr("jax_available") = false;
+#endif
+}
+
+// Implementation of variational contact bindings
+void bind_variational_contact(py::module& m) {
+    // Variational Contact Parameters
+    py::class_<VariationalContactParams>(m, "VariationalContactParams",
+        "Parameters for mathematically rigorous variational contact formulation")
+        .def(py::init<>())
+        .def_readwrite("barrier_stiffness", &VariationalContactParams::barrier_stiffness,
+            "Barrier function stiffness κ (default: 1e6)")
+        .def_readwrite("barrier_threshold", &VariationalContactParams::barrier_threshold,
+            "Distance threshold δ for barrier activation (default: 1e-4)")
+        .def_readwrite("friction_regularization", &VariationalContactParams::friction_regularization,
+            "Huber regularization for friction ε (default: 1e-6)")
+        .def_readwrite("max_newton_iterations", &VariationalContactParams::max_newton_iterations,
+            "Maximum Newton-Raphson iterations (default: 50)")
+        .def_readwrite("newton_tolerance", &VariationalContactParams::newton_tolerance,
+            "Newton convergence tolerance (default: 1e-10)")
+        .def_readwrite("enable_energy_conservation", &VariationalContactParams::enable_energy_conservation,
+            "Enable energy conservation guarantees (default: true)")
+        .def_readwrite("enable_momentum_conservation", &VariationalContactParams::enable_momentum_conservation,
+            "Enable momentum conservation guarantees (default: true)");
+
+    // Variational Contact Solver (CPU version)
+    py::class_<VariationalContactSolver>(m, "VariationalContactSolver",
+        "Mathematically rigorous contact solver with theoretical guarantees")
+        .def(py::init<const VariationalContactParams&>(), py::arg("params") = VariationalContactParams{},
+            "Initialize with contact parameters")
+
+        .def("compute_contact_forces", [](VariationalContactSolver& self,
+                py::array_t<double> positions, py::array_t<double> velocities,
+                py::array_t<double> masses, py::array_t<double> radii,
+                py::array_t<int> material_ids) {
+            auto pos_vec = numpy_to_eigen_vector3d(positions);
+            auto vel_vec = numpy_to_eigen_vector3d(velocities);
+            auto mass_vec = py::cast<std::vector<double>>(masses);
+            auto radii_vec = py::cast<std::vector<double>>(radii);
+            auto mat_vec = py::cast<std::vector<int>>(material_ids);
+
+            std::vector<Eigen::Vector3d> forces;
+            self.computeContactForces(pos_vec, vel_vec, mass_vec, radii_vec, mat_vec, forces);
+            return eigen_vector3d_to_numpy(forces);
+        }, "Compute contact forces with mathematical guarantees",
+           py::arg("positions"), py::arg("velocities"), py::arg("masses"),
+           py::arg("radii"), py::arg("material_ids"))
+
+        .def("compute_contact_energy", [](VariationalContactSolver& self,
+                py::array_t<double> positions, py::array_t<double> radii,
+                py::array_t<int> material_ids) {
+            auto pos_vec = numpy_to_eigen_vector3d(positions);
+            auto radii_vec = py::cast<std::vector<double>>(radii);
+            auto mat_vec = py::cast<std::vector<int>>(material_ids);
+            return self.computeContactEnergy(pos_vec, radii_vec, mat_vec);
+        }, "Compute total contact potential energy",
+           py::arg("positions"), py::arg("radii"), py::arg("material_ids"))
+
+        .def("verify_gradient_correctness", [](VariationalContactSolver& self,
+                py::array_t<double> positions, py::array_t<double> velocities,
+                py::array_t<double> masses, py::array_t<double> radii,
+                py::array_t<int> material_ids, double tolerance) {
+            auto pos_vec = numpy_to_eigen_vector3d(positions);
+            auto vel_vec = numpy_to_eigen_vector3d(velocities);
+            auto mass_vec = py::cast<std::vector<double>>(masses);
+            auto radii_vec = py::cast<std::vector<double>>(radii);
+            auto mat_vec = py::cast<std::vector<int>>(material_ids);
+            return self.verifyGradientCorrectness(pos_vec, vel_vec, mass_vec, radii_vec, mat_vec, tolerance);
+        }, "Verify gradient correctness against analytical derivatives",
+           py::arg("positions"), py::arg("velocities"), py::arg("masses"),
+           py::arg("radii"), py::arg("material_ids"), py::arg("tolerance") = 1e-8);
+
+    // Variational Contact Integrator
+    py::class_<VariationalContactIntegrator>(m, "VariationalContactIntegrator",
+        "Hybrid implicit-explicit integrator with provable stability")
+        .def(py::init<const VariationalContactParams&>(), py::arg("contact_params") = VariationalContactParams{},
+            "Initialize with contact parameters")
+
+        .def("integrate_step", [](VariationalContactIntegrator& self,
+                py::array_t<double> positions, py::array_t<double> velocities,
+                py::array_t<double> masses, py::array_t<double> radii,
+                py::array_t<int> material_ids, double dt) {
+            auto pos_vec = numpy_to_eigen_vector3d(positions);
+            auto vel_vec = numpy_to_eigen_vector3d(velocities);
+            auto mass_vec = py::cast<std::vector<double>>(masses);
+            auto radii_vec = py::cast<std::vector<double>>(radii);
+            auto mat_vec = py::cast<std::vector<int>>(material_ids);
+
+            std::vector<Eigen::Vector3d> ext_forces; // Empty for now
+
+            double actual_dt = self.integrateStep(pos_vec, vel_vec, mass_vec, radii_vec,
+                                                mat_vec, dt, ext_forces);
+
+            return py::make_tuple(eigen_vector3d_to_numpy(pos_vec),
+                                eigen_vector3d_to_numpy(vel_vec), actual_dt);
+        }, "Integrate one time step with adaptive timestepping",
+           py::arg("positions"), py::arg("velocities"), py::arg("masses"),
+           py::arg("radii"), py::arg("material_ids"), py::arg("dt"));
+
+#ifdef WITH_CUDA
+    // GPU-accelerated versions
+    py::class_<VariationalContactSolverGPU>(m, "VariationalContactSolverGPU",
+        "GPU-accelerated variational contact solver with identical API")
+        .def(py::init<const VariationalContactParams&>(), py::arg("params") = VariationalContactParams{},
+            "Initialize GPU solver with contact parameters")
+
+        .def("compute_contact_forces", [](VariationalContactSolverGPU& self,
+                py::array_t<double> positions, py::array_t<double> velocities,
+                py::array_t<double> masses, py::array_t<double> radii,
+                py::array_t<int> material_ids) {
+            auto pos_vec = numpy_to_eigen_vector3d(positions);
+            auto vel_vec = numpy_to_eigen_vector3d(velocities);
+            auto mass_vec = py::cast<std::vector<double>>(masses);
+            auto radii_vec = py::cast<std::vector<double>>(radii);
+            auto mat_vec = py::cast<std::vector<int>>(material_ids);
+
+            std::vector<Eigen::Vector3d> forces;
+            self.computeContactForces(pos_vec, vel_vec, mass_vec, radii_vec, mat_vec, forces);
+            return eigen_vector3d_to_numpy(forces);
+        }, "GPU-accelerated contact force computation",
+           py::arg("positions"), py::arg("velocities"), py::arg("masses"),
+           py::arg("radii"), py::arg("material_ids"))
+
+        .def_static("is_gpu_available", &VariationalContactSolverGPU::isGPUAvailable,
+            "Check if CUDA-capable GPU is available");
 #endif
 }
