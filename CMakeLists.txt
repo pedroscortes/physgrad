@@ -1,29 +1,62 @@
 cmake_minimum_required(VERSION 3.18)
-project(PhysGrad VERSION 0.1.0 LANGUAGES CXX)
+project(PhysGrad VERSION 1.0.0 LANGUAGES CXX CUDA)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Set CUDA standard
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
 # Options
-option(WITH_CUDA "Enable CUDA support" OFF)
+option(WITH_CUDA "Enable CUDA support" ON)
 option(WITH_VISUALIZATION "Enable OpenGL/ImGui visualization" ON)
 option(WITH_PYTHON "Build Python bindings" ON)
 option(BUILD_TESTS "Build test suite" ON)
+option(BUILD_DEMOS "Build demonstration programs" ON)
+option(BUILD_BENCHMARKS "Build performance benchmarks" ON)
 
-# Find packages
+# Build type
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Compiler flags
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native")
+
+# CUDA flags
+set(CMAKE_CUDA_FLAGS_DEBUG "-g -G -O0")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -DNDEBUG --use_fast_math")
+
+# CUDA architectures (adjust based on your GPU)
+set(CMAKE_CUDA_ARCHITECTURES "70;75;80;86")
+
+# Find required packages
 find_package(Eigen3 REQUIRED)
+find_package(OpenMP REQUIRED)
+find_package(MPI REQUIRED)
+
+if(WITH_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+
+    # Find CUDA libraries
+    find_library(CUDNN_LIBRARY cudnn HINTS ${CUDAToolkit_LIBRARY_DIR})
+    if(CUDNN_LIBRARY)
+        set(HAVE_CUDNN TRUE)
+        message(STATUS "Found cuDNN: ${CUDNN_LIBRARY}")
+    else()
+        set(HAVE_CUDNN FALSE)
+        message(WARNING "cuDNN not found - some neural network features will be disabled")
+    endif()
+endif()
 
 if(WITH_VISUALIZATION)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GL REQUIRED gl)
     pkg_check_modules(GLFW REQUIRED glfw3)
     pkg_check_modules(GLEW REQUIRED glew)
-endif()
-
-if(WITH_CUDA)
-    enable_language(CUDA)
-    find_package(CUDAToolkit REQUIRED)
 endif()
 
 if(WITH_PYTHON)
@@ -47,24 +80,70 @@ if(WITH_VISUALIZATION)
     )
 endif()
 
-# Source files
+# Core PhysGrad library sources
 set(PHYSGRAD_SOURCES
+    # Original contact mechanics
     src/variational_contact.cpp
     src/differentiable_contact.cpp
     src/rigid_body.cpp
     src/symplectic_integrators.cpp
     src/constraints.cpp
     src/collision_detection.cpp
+
+    # New comprehensive physics systems
+    src/physics_engine.cpp
+    src/contact_mechanics.cpp
+    src/fluid_dynamics.cpp
+    # src/soft_body_dynamics.cpp  # Temporarily disabled due to thrust usage
+    src/electromagnetic_fields.cpp
+    src/multi_scale_physics.cpp
+    src/gpu_memory_manager.cpp
+    # src/mpi_physics.cpp  # Temporarily disabled - requires MPI
+    # src/physics_streaming.cpp  # Temporarily disabled - requires websocketpp and nlohmann::json
+    # src/neural_fluid_dynamics.cpp  # Temporarily disabled - has compilation issues
+    # src/symbolic_physics_ai.cpp  # Temporarily disabled - incomplete type issues
+    # src/physics_generative_models.cpp  # Temporarily disabled - CUDA kernel launch in cpp file
+    # src/quantum_classical_coupling.cpp  # Temporarily disabled - incomplete type issues
 )
 
-if(WITH_CUDA)
-    list(APPEND PHYSGRAD_SOURCES
-        src/variational_contact_gpu.cu
-        src/variational_contact_kernels.cu
-        src/simulation.cu
-        src/stability_improvements.cu
-    )
-endif()
+# CUDA kernel sources
+set(PHYSGRAD_CUDA_SOURCES
+    # Original CUDA sources
+    src/variational_contact_gpu.cu
+    src/variational_contact_kernels.cu
+    src/simulation.cu
+    src/stability_improvements.cu
+
+    # New CUDA kernels
+    src/physics_kernels.cu
+    src/contact_kernels.cu
+    src/fluid_kernels.cu
+    src/softbody_kernels.cu
+    src/electromagnetic_kernels.cu
+    src/electromagnetic_fields_gpu.cu
+    # src/soft_body_dynamics_gpu.cu  # Temporarily disabled
+    src/memory_kernels.cu
+    src/neural_kernels.cu
+    src/symbolic_kernels.cu
+    src/generative_kernels.cu
+    src/quantum_kernels.cu
+)
+
+# Demonstration programs
+set(DEMO_SOURCES
+    demo_contact_mechanics.cu
+    demo_fluid_dynamics.cu
+    demo_soft_body_dynamics.cu
+    demo_electromagnetic_fields.cu
+    demo_multi_scale_physics.cu
+    demo_gpu_memory_management.cu
+    demo_mpi_physics.cu
+    demo_physics_streaming.cu
+    demo_neural_fluid_dynamics.cu
+    demo_symbolic_physics_ai.cu
+    demo_physics_generative_models.cu
+    demo_quantum_classical_coupling.cu
+)
 
 if(WITH_VISUALIZATION)
     list(APPEND PHYSGRAD_SOURCES
@@ -78,8 +157,31 @@ if(WITH_VISUALIZATION)
     )
 endif()
 
-# Create main library
+# Define preprocessor macros
+add_definitions(-DHAVE_EIGEN)
+if(WITH_CUDA)
+    add_definitions(-DHAVE_CUDA)
+    add_definitions(-DHAVE_CUBLAS)
+    add_definitions(-DHAVE_CUFFT)
+    add_definitions(-DHAVE_CURAND)
+endif()
+if(HAVE_CUDNN)
+    add_definitions(-DHAVE_CUDNN)
+endif()
+
+# Create the main PhysGrad library
 add_library(physgrad_core ${PHYSGRAD_SOURCES})
+
+# Create CUDA kernels library
+if(WITH_CUDA)
+    add_library(physgrad_kernels STATIC ${PHYSGRAD_CUDA_SOURCES})
+
+    # Set CUDA properties for kernel library
+    set_target_properties(physgrad_kernels PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    )
+endif()
 
 # Set target properties
 target_compile_definitions(physgrad_core PRIVATE
@@ -87,14 +189,29 @@ target_compile_definitions(physgrad_core PRIVATE
     $<$<BOOL:${WITH_VISUALIZATION}>:IMGUI_IMPL_OPENGL_LOADER_GLEW>
 )
 
+# Link libraries
 target_link_libraries(physgrad_core
     Eigen3::Eigen
+    OpenMP::OpenMP_CXX
+    ${MPI_LIBRARIES}
     $<$<BOOL:${WITH_VISUALIZATION}>:${GL_LIBRARIES}>
     $<$<BOOL:${WITH_VISUALIZATION}>:${GLFW_LIBRARIES}>
     $<$<BOOL:${WITH_VISUALIZATION}>:${GLEW_LIBRARIES}>
-    $<$<BOOL:${WITH_CUDA}>:CUDA::cudart>
-    $<$<BOOL:${WITH_CUDA}>:CUDA::cublas>
 )
+
+if(WITH_CUDA)
+    target_link_libraries(physgrad_core
+        physgrad_kernels
+        CUDA::cudart
+        CUDA::cublas
+        CUDA::cufft
+        CUDA::curand
+    )
+
+    if(HAVE_CUDNN)
+        target_link_libraries(physgrad_core ${CUDNN_LIBRARY})
+    endif()
+endif()
 
 if(WITH_VISUALIZATION)
     target_compile_options(physgrad_core PRIVATE ${GL_CFLAGS_OTHER} ${GLFW_CFLAGS_OTHER} ${GLEW_CFLAGS_OTHER})
@@ -115,17 +232,53 @@ if(WITH_PYTHON)
     )
 endif()
 
+# Create demo executables
+if(BUILD_DEMOS)
+    foreach(DEMO_SOURCE ${DEMO_SOURCES})
+        get_filename_component(DEMO_NAME ${DEMO_SOURCE} NAME_WE)
+        add_executable(${DEMO_NAME} ${DEMO_SOURCE})
+        target_link_libraries(${DEMO_NAME} physgrad_core)
+
+        if(WITH_CUDA)
+            set_target_properties(${DEMO_NAME} PROPERTIES
+                CUDA_SEPARABLE_COMPILATION ON
+                CUDA_RESOLVE_DEVICE_SYMBOLS ON
+            )
+        endif()
+    endforeach()
+endif()
+
 # Tests
 if(BUILD_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 
 # Installation
-install(TARGETS physgrad_core
+set(INSTALL_TARGETS physgrad_core)
+if(WITH_CUDA)
+    list(APPEND INSTALL_TARGETS physgrad_kernels)
+endif()
+
+install(TARGETS ${INSTALL_TARGETS}
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
 )
+
+# Install headers
+install(DIRECTORY src/
+    DESTINATION include/physgrad
+    FILES_MATCHING PATTERN "*.h" PATTERN "*.cuh"
+)
+
+# Install demo programs
+if(BUILD_DEMOS)
+    foreach(DEMO_SOURCE ${DEMO_SOURCES})
+        get_filename_component(DEMO_NAME ${DEMO_SOURCE} NAME_WE)
+        install(TARGETS ${DEMO_NAME} DESTINATION bin)
+    endforeach()
+endif()
 
 if(WITH_PYTHON)
     install(TARGETS physgrad_cpp
