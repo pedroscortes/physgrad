@@ -261,6 +261,14 @@ struct KernelLaunchParams {
 };
 
 // Error checking macros for GPU kernels
+#define CUDA_CHECK(error) do { \
+    cudaError_t err = error; \
+    if (err != cudaSuccess) { \
+        fprintf(stderr, "CUDA error at %s:%d - %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
+        exit(1); \
+    } \
+} while(0)
+
 #define CUDA_CHECK_KERNEL() do { \
     cudaError_t error = cudaGetLastError(); \
     if (error != cudaSuccess) { \

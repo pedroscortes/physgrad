@@ -3,6 +3,8 @@
 #include <fstream>
 #include <sstream>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 namespace physgrad {
 
@@ -307,6 +309,19 @@ Renderer::~Renderer() {
 }
 
 bool Renderer::initialize(int width, int height, const std::string& title) {
+    // Check for display environment (detect headless mode)
+    const char* display = std::getenv("DISPLAY");
+    if (!display || std::strlen(display) == 0) {
+        std::cerr << "Warning: No display environment detected (headless mode)." << std::endl;
+        std::cerr << "Visualization disabled - running in headless mode." << std::endl;
+        return false;
+    }
+
+    // Set error callback before initialization
+    glfwSetErrorCallback([](int error, const char* description) {
+        std::cerr << "GLFW Error " << error << ": " << description << std::endl;
+    });
+
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return false;

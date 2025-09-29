@@ -1,8 +1,4 @@
-/**
- * PhysGrad - Physics Engine Implementation
- *
- * Main physics engine class that coordinates all subsystems.
- */
+// PhysGrad Physics Engine Implementation
 
 #include "physics_engine.h"
 #include <iostream>
@@ -25,10 +21,7 @@ bool PhysicsEngine::initialize() {
         return true;
     }
 
-    // Initialize subsystems
     std::cout << "Initializing PhysGrad Physics Engine..." << std::endl;
-
-    // Clear all data structures
     positions_.clear();
     velocities_.clear();
     forces_.clear();
@@ -48,8 +41,6 @@ void PhysicsEngine::cleanup() {
     }
 
     std::cout << "Cleaning up Physics Engine..." << std::endl;
-
-    // Clear all data
     positions_.clear();
     velocities_.clear();
     forces_.clear();
@@ -160,40 +151,51 @@ void PhysicsEngine::updateForces() {
     // Clear forces
     std::fill(forces_.begin(), forces_.end(), float3{0.0f, 0.0f, 0.0f});
 
-    // Calculate electrostatic forces
     for (int i = 0; i < num_particles_; ++i) {
         for (int j = i + 1; j < num_particles_; ++j) {
-            float3 r_ij = {
-                positions_[i].x - positions_[j].x,
-                positions_[i].y - positions_[j].y,
-                positions_[i].z - positions_[j].z
+            // Direction vector from i to j
+            float3 diff = {
+                positions_[j].x - positions_[i].x,
+                positions_[j].y - positions_[i].y,
+                positions_[j].z - positions_[i].z
             };
 
-            float r2 = r_ij.x * r_ij.x + r_ij.y * r_ij.y + r_ij.z * r_ij.z;
-            float r = std::sqrt(r2);
+            float distance = std::sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
 
-            if (r > 1e-10f) {
-                // Coulomb force
-                const float k_e = 8.9875517923e9f; // N⋅m²/C²
-                float force_magnitude = k_e * charges_[i] * charges_[j] / r2;
+            // Avoid singularity
+            if (distance < 1e-6f) continue;
 
-                float3 force_dir = {r_ij.x / r, r_ij.y / r, r_ij.z / r};
+            // Direction (normalized)
+            float3 direction = {
+                diff.x / distance,
+                diff.y / distance,
+                diff.z / distance
+            };
 
-                float3 force = {
-                    force_magnitude * force_dir.x,
-                    force_magnitude * force_dir.y,
-                    force_magnitude * force_dir.z
-                };
+            float3 total_force = {0.0f, 0.0f, 0.0f};
 
-                // Apply forces (Newton's 3rd law)
-                forces_[i].x += force.x;
-                forces_[i].y += force.y;
-                forces_[i].z += force.z;
+            // 1. Gravitational forces (always attractive)
+            const float G = 1.0f;
+            float grav_magnitude = G * masses_[i] * masses_[j] / (distance * distance);
+            total_force.x += grav_magnitude * direction.x;
+            total_force.y += grav_magnitude * direction.y;
+            total_force.z += grav_magnitude * direction.z;
 
-                forces_[j].x -= force.x;
-                forces_[j].y -= force.y;
-                forces_[j].z -= force.z;
-            }
+            // 2. Electrostatic forces (attractive if opposite charges, repulsive if same)
+            const float k_e = 8.9875517923e9f;
+            float elec_magnitude = k_e * charges_[i] * charges_[j] / (distance * distance);
+            total_force.x += elec_magnitude * direction.x;
+            total_force.y += elec_magnitude * direction.y;
+            total_force.z += elec_magnitude * direction.z;
+
+            // Apply forces (Newton's 3rd law)
+            forces_[i].x += total_force.x;
+            forces_[i].y += total_force.y;
+            forces_[i].z += total_force.z;
+
+            forces_[j].x -= total_force.x;
+            forces_[j].y -= total_force.y;
+            forces_[j].z -= total_force.z;
         }
     }
 }
@@ -206,26 +208,30 @@ void PhysicsEngine::step(float dt) {
     // Update forces
     updateForces();
 
-    // Integrate using simple Euler method
+    // Integrate using Verlet method (same as our working minimal version)
     for (int i = 0; i < num_particles_; ++i) {
         if (masses_[i] > 1e-10f) {
+            // Calculate acceleration: a = F/m
             float3 acceleration = {
                 forces_[i].x / masses_[i],
                 forces_[i].y / masses_[i],
                 forces_[i].z / masses_[i]
             };
 
-            // Update velocity
+            // Update position: x += v*dt + 0.5*a*dt^2
+            positions_[i].x += velocities_[i].x * dt + 0.5f * acceleration.x * dt * dt;
+            positions_[i].y += velocities_[i].y * dt + 0.5f * acceleration.y * dt * dt;
+            positions_[i].z += velocities_[i].z * dt + 0.5f * acceleration.z * dt * dt;
+
+            // Update velocity: v += a*dt
             velocities_[i].x += acceleration.x * dt;
             velocities_[i].y += acceleration.y * dt;
             velocities_[i].z += acceleration.z * dt;
-
-            // Update position
-            positions_[i].x += velocities_[i].x * dt;
-            positions_[i].y += velocities_[i].y * dt;
-            positions_[i].z += velocities_[i].z * dt;
         }
     }
+
+    // Apply boundary conditions
+    applyBoundaryConditions();
 }
 
 float PhysicsEngine::calculateTotalEnergy() const {
@@ -244,7 +250,8 @@ float PhysicsEngine::calculateTotalEnergy() const {
         kinetic_energy += 0.5f * masses_[i] * v2;
     }
 
-    // Calculate potential energy
+    // Calculate potential energy (both gravitational and electrostatic)
+    const float G = 1.0f;
     const float k_e = 8.9875517923e9f;
     for (int i = 0; i < num_particles_; ++i) {
         for (int j = i + 1; j < num_particles_; ++j) {
@@ -257,6 +264,10 @@ float PhysicsEngine::calculateTotalEnergy() const {
             float r = std::sqrt(r_ij.x * r_ij.x + r_ij.y * r_ij.y + r_ij.z * r_ij.z);
 
             if (r > 1e-10f) {
+                // Gravitational potential energy (always attractive, so negative)
+                potential_energy += -G * masses_[i] * masses_[j] / r;
+
+                // Electrostatic potential energy
                 potential_energy += k_e * charges_[i] * charges_[j] / r;
             }
         }
@@ -288,6 +299,34 @@ void PhysicsEngine::setBoundaryConditions(BoundaryType type, float3 bounds) {
 
 void PhysicsEngine::setIntegrationMethod(IntegrationMethod method) {
     integration_method_ = method;
+}
+
+void PhysicsEngine::applyBoundaryConditions() {
+    if (!initialized_) return;
+
+    for (int i = 0; i < num_particles_; ++i) {
+        if (boundary_type_ == BoundaryType::PERIODIC) {
+            // Periodic boundary conditions (wrap around)
+            if (positions_[i].x >= boundary_bounds_.x) {
+                positions_[i].x -= boundary_bounds_.x;
+            } else if (positions_[i].x < 0.0f) {
+                positions_[i].x += boundary_bounds_.x;
+            }
+
+            if (positions_[i].y >= boundary_bounds_.y) {
+                positions_[i].y -= boundary_bounds_.y;
+            } else if (positions_[i].y < 0.0f) {
+                positions_[i].y += boundary_bounds_.y;
+            }
+
+            if (positions_[i].z >= boundary_bounds_.z) {
+                positions_[i].z -= boundary_bounds_.z;
+            } else if (positions_[i].z < 0.0f) {
+                positions_[i].z += boundary_bounds_.z;
+            }
+        }
+        // TODO: Add REFLECTIVE and ABSORBING boundary types if needed
+    }
 }
 
 } // namespace physgrad

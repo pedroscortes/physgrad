@@ -1,11 +1,27 @@
-/**
- * PhysGrad - CUDA Kernels Unit Tests
- */
+// PhysGrad CUDA Kernels Unit Tests
 
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
 #include <vector>
 #include <memory>
+
+// Include physgrad kernels
+namespace physgrad {
+    // Declare kernel functions
+    __global__ void verlet_integration_kernel(
+        float3* positions, float3* velocities, const float3* forces,
+        const float* masses, float dt, int num_particles
+    );
+
+    __global__ void classical_force_kernel(
+        const float3* positions, const float* charges,
+        float3* forces, int num_particles
+    );
+
+    __global__ void memory_operations_kernel(
+        float* data, int size
+    );
+}
 
 // Include kernel headers
 extern "C" {
@@ -195,8 +211,9 @@ TEST_F(CudaKernelTest, MemoryOperations) {
     cudaMemcpy(h_data.data(), d_data, size * sizeof(float), cudaMemcpyDeviceToHost);
 
     // Verify that memory operations completed successfully
-    // (This would depend on what the memory operations actually do)
-    EXPECT_NE(h_data[0], 0.0f);  // Should have been modified
+    // Our kernel does: data[i] = data[i] * 2.0f + i
+    // For index 0: 0 * 2 + 0 = 0, so check index 1 instead
+    EXPECT_EQ(h_data[1], 3.0f);  // Should be: 1 * 2 + 1 = 3
 
     cudaFree(d_data);
 }
@@ -268,8 +285,7 @@ extern "C" void launch_verlet_integration_test(
     dim3 block_size(256);
     dim3 grid_size((num_particles + block_size.x - 1) / block_size.x);
 
-    // This would call the actual Verlet integration kernel
-    // verlet_integration_kernel<<<grid_size, block_size>>>(positions, velocities, forces, masses, dt, num_particles);
+    physgrad::verlet_integration_kernel<<<grid_size, block_size>>>(positions, velocities, forces, masses, dt, num_particles);
 }
 
 extern "C" void launch_classical_force_test(
@@ -279,14 +295,12 @@ extern "C" void launch_classical_force_test(
     dim3 block_size(256);
     dim3 grid_size((num_particles + block_size.x - 1) / block_size.x);
 
-    // This would call the actual classical force kernel
-    // classical_force_kernel<<<grid_size, block_size>>>(positions, charges, forces, num_particles);
+    physgrad::classical_force_kernel<<<grid_size, block_size>>>(positions, charges, forces, num_particles);
 }
 
 extern "C" void launch_memory_operations_test(float* data, int size) {
     dim3 block_size(256);
     dim3 grid_size((size + block_size.x - 1) / block_size.x);
 
-    // This would call memory operation kernels
-    // zero_memory_kernel<<<grid_size, block_size>>>(data, size);
+    physgrad::memory_operations_kernel<<<grid_size, block_size>>>(data, size);
 }

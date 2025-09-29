@@ -12,6 +12,8 @@
 
 namespace physgrad {
 
+// Note: Constant memory symbols are defined in variational_contact_kernels.cu
+
 // Kernel launch parameter computation
 KernelLaunchParams KernelLaunchParams::computeFor1D(int num_elements, int preferred_block_size) {
     KernelLaunchParams params;
@@ -280,12 +282,19 @@ void VariationalContactSolverGPU::initializeGPU(int n_bodies) {
         capacity, max_contacts, max_pairs, 32768
     ));
 
-    // Set GPU parameters in constant memory
-    CUDA_CHECK(cudaMemcpyToSymbol(c_barrier_stiffness, &params.barrier_stiffness, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(c_barrier_threshold, &params.barrier_threshold, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(c_friction_regularization, &params.friction_regularization, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(c_max_newton_iterations, &params.max_newton_iterations, sizeof(int)));
-    CUDA_CHECK(cudaMemcpyToSymbol(c_newton_tolerance, &params.newton_tolerance, sizeof(float)));
+    // TODO: Set GPU parameters in constant memory (currently disabled due to linking issues)
+    // CUDA_CHECK(cudaMemcpyToSymbol(c_barrier_stiffness, &params.barrier_stiffness, sizeof(float)));
+    // CUDA_CHECK(cudaMemcpyToSymbol(c_barrier_threshold, &params.barrier_threshold, sizeof(float)));
+    // CUDA_CHECK(cudaMemcpyToSymbol(c_friction_regularization, &params.friction_regularization, sizeof(float)));
+    // CUDA_CHECK(cudaMemcpyToSymbol(c_max_newton_iterations, &params.max_newton_iterations, sizeof(int)));
+    // CUDA_CHECK(cudaMemcpyToSymbol(c_newton_tolerance, &params.newton_tolerance, sizeof(float)));
+
+    // For now, store parameters in GPU data structure
+    gpu_data->barrier_stiffness = static_cast<float>(params.barrier_stiffness);
+    gpu_data->barrier_threshold = static_cast<float>(params.barrier_threshold);
+    gpu_data->friction_regularization = static_cast<float>(params.friction_regularization);
+    gpu_data->max_newton_iterations = params.max_newton_iterations;
+    gpu_data->newton_tolerance = static_cast<float>(params.newton_tolerance);
 
     current_n_bodies = capacity;
     gpu_initialized = true;

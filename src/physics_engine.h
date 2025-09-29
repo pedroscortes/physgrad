@@ -70,6 +70,9 @@ private:
     BoundaryType boundary_type_ = BoundaryType::OPEN;
     float3 boundary_bounds_ = {0.0f, 0.0f, 0.0f};
     IntegrationMethod integration_method_ = IntegrationMethod::VERLET;
+
+    // Internal methods
+    void applyBoundaryConditions();
 };
 
 } // namespace physgrad

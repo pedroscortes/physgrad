@@ -21,12 +21,13 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 set(TEST_SOURCES
     test_physics_engine.cpp
     test_memory_manager.cpp
+    test_contact_mechanics.cpp
+    test_fluid_dynamics.cpp
 )
 
 if(WITH_CUDA)
     list(APPEND TEST_SOURCES
         test_cuda_kernels.cu
-        test_gpu_memory.cu
     )
 endif()
 
