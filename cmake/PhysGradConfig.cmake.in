@@ -1,0 +1,30 @@
+# PhysGradConfig.cmake.in
+# Configuration file for PhysGrad package
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Record the state of find_package arguments
+set(PhysGrad_FIND_QUIETLY @PhysGrad_FIND_QUIETLY@)
+set(PhysGrad_FIND_REQUIRED @PhysGrad_FIND_REQUIRED@)
+
+# Find required dependencies
+find_dependency(Threads REQUIRED)
+
+# Optional dependencies
+if(@PHYSGRAD_ENABLE_OPENMP@)
+    find_dependency(OpenMP)
+endif()
+
+if(@PHYSGRAD_ENABLE_PYTORCH@)
+    find_dependency(PkgConfig)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(PYTORCH torch)
+    endif()
+endif()
+
+# Include the targets file
+include("${CMAKE_CURRENT_LIST_DIR}/PhysGradTargets.cmake")
+
+check_required_components(PhysGrad)

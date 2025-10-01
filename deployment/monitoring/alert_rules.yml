@@ -1,0 +1,88 @@
+groups:
+  - name: physgrad_alerts
+    rules:
+      # Service health alerts
+      - alert: PhysGradServiceDown
+        expr: up{job="physgrad-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PhysGrad service is down"
+          description: "PhysGrad API service has been down for more than 1 minute"
+
+      - alert: PhysGradHighErrorRate
+        expr: rate(physgrad_http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate in PhysGrad API"
+          description: "PhysGrad API error rate is {{ $value }} errors per second"
+
+      # Performance alerts
+      - alert: PhysGradHighLatency
+        expr: histogram_quantile(0.95, rate(physgrad_http_request_duration_seconds_bucket[5m])) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency in PhysGrad API"
+          description: "95th percentile latency is {{ $value }}s"
+
+      - alert: PhysGradHighMemoryUsage
+        expr: physgrad_memory_usage_bytes / physgrad_memory_limit_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage in PhysGrad"
+          description: "Memory usage is {{ $value | humanizePercentage }}"
+
+      # GPU alerts
+      - alert: GPUHighUtilization
+        expr: physgrad_gpu_utilization_percent > 95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High GPU utilization"
+          description: "GPU utilization is {{ $value }}% for more than 10 minutes"
+
+      - alert: GPUHighTemperature
+        expr: physgrad_gpu_temperature_celsius > 85
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU temperature too high"
+          description: "GPU temperature is {{ $value }}°C"
+
+      # Simulation alerts
+      - alert: SimulationFailureRate
+        expr: rate(physgrad_simulations_failed_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High simulation failure rate"
+          description: "Simulation failure rate is {{ $value }} failures per second"
+
+      - alert: LongRunningSimulation
+        expr: physgrad_simulation_duration_seconds > 3600
+        for: 0s
+        labels:
+          severity: info
+        annotations:
+          summary: "Long running simulation detected"
+          description: "Simulation has been running for {{ $value | humanizeDuration }}"
+
+      # Storage alerts
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/app/data"} / node_filesystem_size_bytes{mountpoint="/app/data"}) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space on data volume"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining"

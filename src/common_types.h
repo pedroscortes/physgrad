@@ -2,12 +2,21 @@
  * PhysGrad - Common Types Header
  *
  * Provides common type definitions that work in both CUDA and C++ compilation contexts.
+ * Enhanced with C++20 concepts for type safety and automatic optimization.
  */
 
 #ifndef PHYSGRAD_COMMON_TYPES_H
 #define PHYSGRAD_COMMON_TYPES_H
 
 #include <cmath>
+#include <array>
+#include <type_traits>
+
+// Include C++20 concepts when available
+#if __cplusplus >= 202002L
+    #include "concepts/forward_declarations.h"
+    #define PHYSGRAD_CONCEPTS_AVAILABLE
+#endif
 
 #ifdef __CUDACC__
     // CUDA compilation - use native CUDA types
@@ -138,6 +147,219 @@ namespace physgrad {
             a.z * b.x - a.x * b.z,
             a.x * b.y - a.y * b.x
         );
+    }
+
+    // =============================================================================
+    // CONCEPT-COMPLIANT VECTOR TYPES
+    // =============================================================================
+
+#ifdef PHYSGRAD_CONCEPTS_AVAILABLE
+    // Concept-compliant 3D vector type that satisfies Vector3D concept
+    template<concepts::PhysicsScalar T>
+    class ConceptVector3D {
+    public:
+        using value_type = T;
+
+        T x, y, z;
+
+        constexpr ConceptVector3D() : x(T{0}), y(T{0}), z(T{0}) {}
+        constexpr ConceptVector3D(T x_, T y_, T z_) : x(x_), y(y_), z(z_) {}
+
+        // Array-like access for concept compliance
+        constexpr T& operator[](size_t i) {
+            return (&x)[i];
+        }
+
+        constexpr const T& operator[](size_t i) const {
+            return (&x)[i];
+        }
+
+        static constexpr size_t size() { return 3; }
+
+        // Vector operations
+        ConceptVector3D operator+(const ConceptVector3D& other) const {
+            return ConceptVector3D(x + other.x, y + other.y, z + other.z);
+        }
+
+        ConceptVector3D operator-(const ConceptVector3D& other) const {
+            return ConceptVector3D(x - other.x, y - other.y, z - other.z);
+        }
+
+        ConceptVector3D operator*(T scalar) const {
+            return ConceptVector3D(x * scalar, y * scalar, z * scalar);
+        }
+
+        // Convert to/from float3 for compatibility
+        ConceptVector3D(const float3& f3) : x(static_cast<T>(f3.x)),
+                                           y(static_cast<T>(f3.y)),
+                                           z(static_cast<T>(f3.z)) {}
+
+        float3 to_float3() const {
+            return make_float3(static_cast<float>(x),
+                              static_cast<float>(y),
+                              static_cast<float>(z));
+        }
+    };
+
+    // Verify that our ConceptVector3D satisfies the Vector3D concept
+    static_assert(concepts::Vector3D<ConceptVector3D<float>>);
+    static_assert(concepts::Vector3D<ConceptVector3D<double>>);
+
+    // GPU-compatible particle type that satisfies Particle concept
+    template<concepts::PhysicsScalar T>
+    struct ConceptParticleData {
+        using scalar_type = T;
+        using vector_type = ConceptVector3D<T>;
+
+        ConceptVector3D<T> position_;
+        ConceptVector3D<T> velocity_;
+        T mass_;
+
+        ConceptParticleData() : mass_(T{1}) {}
+        ConceptParticleData(const ConceptVector3D<T>& pos,
+                           const ConceptVector3D<T>& vel,
+                           T mass)
+            : position_(pos), velocity_(vel), mass_(mass) {}
+
+        auto position() const -> ConceptVector3D<T> { return position_; }
+        auto velocity() const -> ConceptVector3D<T> { return velocity_; }
+        auto mass() const -> T { return mass_; }
+
+        void set_position(const ConceptVector3D<T>& pos) { position_ = pos; }
+        void set_velocity(const ConceptVector3D<T>& vel) { velocity_ = vel; }
+    };
+
+    // Verify Particle concept compliance
+    static_assert(concepts::DynamicParticle<ConceptParticleData<float>>);
+    static_assert(concepts::GPUCompatible<ConceptParticleData<float>>);
+
+    // =============================================================================
+    // AUTOMATIC TYPE OPTIMIZATION UTILITIES
+    // =============================================================================
+
+    // Type aliases for optimization (simplified without full type_traits)
+    template<int precision_bits>
+    using optimal_physics_scalar = std::conditional_t<precision_bits >= 64, double, float>;
+
+    // Simple vector type alias
+    template<concepts::PhysicsScalar T>
+    using optimal_physics_vector = ConceptVector3D<T>;
+
+#else // !PHYSGRAD_CONCEPTS_AVAILABLE
+    // Fallback vector type when concepts are not available
+    template<typename T>
+    class ConceptVector3D {
+    public:
+        using value_type = T;
+
+        T x, y, z;
+
+        constexpr ConceptVector3D() : x(T{0}), y(T{0}), z(T{0}) {}
+        constexpr ConceptVector3D(T x_, T y_, T z_) : x(x_), y(y_), z(z_) {}
+
+        // Array-like access
+        constexpr T& operator[](size_t i) {
+            return (&x)[i];
+        }
+
+        constexpr const T& operator[](size_t i) const {
+            return (&x)[i];
+        }
+
+        static constexpr size_t size() { return 3; }
+
+        // Vector operations
+        ConceptVector3D operator+(const ConceptVector3D& other) const {
+            return ConceptVector3D(x + other.x, y + other.y, z + other.z);
+        }
+
+        ConceptVector3D operator-(const ConceptVector3D& other) const {
+            return ConceptVector3D(x - other.x, y - other.y, z - other.z);
+        }
+
+        ConceptVector3D operator*(T scalar) const {
+            return ConceptVector3D(x * scalar, y * scalar, z * scalar);
+        }
+
+        // Convert to/from float3 for compatibility
+        ConceptVector3D(const float3& f3) : x(static_cast<T>(f3.x)),
+                                           y(static_cast<T>(f3.y)),
+                                           z(static_cast<T>(f3.z)) {}
+
+        float3 to_float3() const {
+            return make_float3(static_cast<float>(x),
+                              static_cast<float>(y),
+                              static_cast<float>(z));
+        }
+    };
+
+    // Fallback particle type when concepts are not available
+    template<typename T>
+    struct ConceptParticleData {
+        using scalar_type = T;
+        using vector_type = ConceptVector3D<T>;
+
+        ConceptVector3D<T> position_;
+        ConceptVector3D<T> velocity_;
+        T mass_;
+
+        ConceptParticleData() : mass_(T{1}) {}
+        ConceptParticleData(const ConceptVector3D<T>& pos,
+                           const ConceptVector3D<T>& vel,
+                           T mass)
+            : position_(pos), velocity_(vel), mass_(mass) {}
+
+        auto position() const -> ConceptVector3D<T> { return position_; }
+        auto velocity() const -> ConceptVector3D<T> { return velocity_; }
+        auto mass() const -> T { return mass_; }
+
+        void set_position(const ConceptVector3D<T>& pos) { position_ = pos; }
+        void set_velocity(const ConceptVector3D<T>& vel) { velocity_ = vel; }
+    };
+
+    // Type aliases for optimization (simplified without full type_traits)
+    template<int precision_bits>
+    using optimal_physics_scalar = std::conditional_t<precision_bits >= 64, double, float>;
+
+    // Simple vector type alias
+    template<typename T>
+    using optimal_physics_vector = ConceptVector3D<T>;
+
+#endif // PHYSGRAD_CONCEPTS_AVAILABLE
+
+    // =============================================================================
+    // LEGACY COMPATIBILITY FUNCTIONS
+    // =============================================================================
+
+    // Convert between legacy and concept-aware types
+    template<typename T>
+    float3 to_legacy_float3(const T& vec) {
+#ifdef PHYSGRAD_CONCEPTS_AVAILABLE
+        if constexpr (concepts::Vector3D<T>) {
+            return make_float3(static_cast<float>(vec[0]),
+                              static_cast<float>(vec[1]),
+                              static_cast<float>(vec[2]));
+        } else {
+#endif
+            return make_float3(vec.x, vec.y, vec.z);
+#ifdef PHYSGRAD_CONCEPTS_AVAILABLE
+        }
+#endif
+    }
+
+    template<typename T>
+    T from_legacy_float3(const float3& f3) {
+#ifdef PHYSGRAD_CONCEPTS_AVAILABLE
+        if constexpr (concepts::Vector3D<T>) {
+            return T{static_cast<typename T::value_type>(f3.x),
+                    static_cast<typename T::value_type>(f3.y),
+                    static_cast<typename T::value_type>(f3.z)};
+        } else {
+#endif
+            return T{f3.x, f3.y, f3.z};
+#ifdef PHYSGRAD_CONCEPTS_AVAILABLE
+        }
+#endif
     }
 }
 

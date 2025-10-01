@@ -8,6 +8,8 @@
 #include <mutex>
 #include <chrono>
 #include <algorithm>
+#include <thread>
+#include <cstring>
 
 namespace physgrad {
 
@@ -164,6 +166,17 @@ private:
     size_t max_storage_cache_;
     AllocationStrategy default_strategy_;
 
+    // Storage-backed cache configuration
+    std::string storage_cache_directory_;
+    bool storage_spill_enabled_;
+    std::unordered_map<void*, std::string> storage_cache_files_;
+    std::mutex storage_cache_mutex_;
+    size_t storage_cache_file_counter_;
+
+    // Migration thread management
+    std::atomic<bool> migration_thread_running_;
+    std::thread migration_thread_;
+
     // Performance monitoring
     std::unique_ptr<MemoryProfiler> profiler_;
 
@@ -220,7 +233,6 @@ public:
 
     // Configuration
     void setDefaultAllocationStrategy(AllocationStrategy strategy);
-    void setPoolSizes(MemoryTier tier, size_t max_size);
 
     // Emergency management
     bool handleMemoryPressure();
@@ -257,6 +269,9 @@ private:
     MemoryTier selectOptimalTier(size_t size, AccessPattern pattern);
     bool isMemoryPressureHigh() const;
     void logMemoryOperation(const std::string& operation, MemoryBlock* block);
+
+    // Pool size management
+    void setPoolSizes(MemoryTier tier, size_t max_size);
 };
 
 // Memory profiler for performance optimization

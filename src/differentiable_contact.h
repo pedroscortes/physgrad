@@ -292,7 +292,7 @@ public:
         // Store for warm starting
         previous_normal_impulses_ = solution.normal_impulses;
         previous_friction_impulses_u_ = solution.friction_impulses_u;
-        previous_friction_impulses_v_ = solution.friction_impulses_v_;
+        previous_friction_impulses_v_ = solution.friction_impulses_v;
 
         // Compute final contact forces
         computeContactForces(contacts, solution);

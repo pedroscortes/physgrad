@@ -292,13 +292,108 @@ MemoryStats MemoryPool::getStats() const {
     return stats;
 }
 
+void MemoryPool::setAllocationStrategy(AllocationStrategy strategy) {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+    strategy_ = strategy;
+}
+
+void MemoryPool::setMaxBlocks(size_t max_blocks) {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+    max_blocks_ = max_blocks;
+
+    // If we have more blocks than the new limit, we should consider cleanup
+    // For now, just update the limit - cleanup can be done separately
+}
+
+double MemoryPool::getFragmentation() const {
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(pool_mutex_));
+
+    if (free_blocks_.empty()) {
+        return 0.0; // No fragmentation if no free blocks
+    }
+
+    size_t total_free = 0;
+    size_t largest_free = 0;
+
+    for (size_t idx : free_blocks_) {
+        size_t block_size = blocks_[idx].size;
+        total_free += block_size;
+        largest_free = std::max(largest_free, block_size);
+    }
+
+    if (total_free == 0) {
+        return 0.0;
+    }
+
+    return 1.0 - (double)largest_free / total_free;
+}
+
+size_t MemoryPool::getAvailableMemory() const {
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(pool_mutex_));
+
+    size_t available = 0;
+    for (size_t idx : free_blocks_) {
+        available += blocks_[idx].size;
+    }
+
+    return available;
+}
+
+void MemoryPool::trim(size_t target_size) {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+
+    // Remove free blocks until we reach target size
+    while (total_allocated_ > target_size && !free_blocks_.empty()) {
+        size_t block_idx = free_blocks_.back();
+        MemoryBlock& block = blocks_[block_idx];
+
+        // Free the actual memory
+        switch (tier_) {
+            case MemoryTier::GPU_DEVICE:
+            case MemoryTier::GPU_UNIFIED:
+#ifdef HAVE_CUDA
+                cudaFree(block.ptr);
+#else
+                free(block.ptr);
+#endif
+                break;
+            case MemoryTier::CPU_PINNED:
+#ifdef HAVE_CUDA
+                cudaFreeHost(block.ptr);
+#else
+                free(block.ptr);
+#endif
+                break;
+            case MemoryTier::CPU_PAGED:
+            case MemoryTier::STORAGE_CACHE:
+                free(block.ptr);
+                break;
+        }
+
+        total_allocated_ -= block.size;
+
+        // Remove from blocks and free list
+        free_blocks_.pop_back();
+        blocks_.erase(blocks_.begin() + block_idx);
+
+        // Update free block indices
+        for (size_t& idx : free_blocks_) {
+            if (idx > block_idx) {
+                idx--;
+            }
+        }
+    }
+}
+
 // MassiveMemoryManager Implementation
 MassiveMemoryManager::MassiveMemoryManager() :
     auto_migration_enabled_(false), migration_threshold_(0),
     migration_interval_(std::chrono::milliseconds(1000)),
     memory_pressure_threshold_(0), emergency_mode_(false),
     max_gpu_memory_(0), max_cpu_memory_(0), max_storage_cache_(0),
-    default_strategy_(AllocationStrategy::ADAPTIVE) {
+    default_strategy_(AllocationStrategy::ADAPTIVE),
+    storage_spill_enabled_(false), storage_cache_file_counter_(0),
+    migration_thread_running_(false) {
 
     // Initialize memory pools
     gpu_device_pool_ = std::make_unique<MemoryPool>(
@@ -365,6 +460,21 @@ bool MassiveMemoryManager::initialize(size_t max_gpu_memory, size_t max_cpu_memo
 }
 
 void MassiveMemoryManager::cleanup() {
+    // Stop migration thread
+    migration_thread_running_ = false;
+    if (migration_thread_.joinable()) {
+        migration_thread_.join();
+    }
+
+    // Clean up storage cache files
+    {
+        std::lock_guard<std::mutex> lock(storage_cache_mutex_);
+        for (const auto& file_entry : storage_cache_files_) {
+            std::filesystem::remove(file_entry.second);
+        }
+        storage_cache_files_.clear();
+    }
+
     if (gpu_device_pool_) gpu_device_pool_->cleanup();
     if (gpu_unified_pool_) gpu_unified_pool_->cleanup();
     if (cpu_pinned_pool_) cpu_pinned_pool_->cleanup();
@@ -529,10 +639,16 @@ bool MassiveMemoryManager::enableMemoryOversubscription(float ratio) {
 bool MassiveMemoryManager::enableAutomaticMigration(bool enable) {
     auto_migration_enabled_ = enable;
 
-    if (enable) {
+    if (enable && !migration_thread_running_) {
         // Start background migration thread
-        std::thread migration_thread(&MassiveMemoryManager::backgroundMigrationThread, this);
-        migration_thread.detach();
+        migration_thread_running_ = true;
+        migration_thread_ = std::thread(&MassiveMemoryManager::backgroundMigrationThread, this);
+    } else if (!enable && migration_thread_running_) {
+        // Stop background migration thread
+        migration_thread_running_ = false;
+        if (migration_thread_.joinable()) {
+            migration_thread_.join();
+        }
     }
 
     return true;
@@ -636,11 +752,11 @@ MemoryTier MassiveMemoryManager::selectOptimalTier(size_t size, AccessPattern pa
 }
 
 void MassiveMemoryManager::backgroundMigrationThread() {
-    while (auto_migration_enabled_) {
+    while (migration_thread_running_) {
         std::this_thread::sleep_for(migration_interval_);
 
         // Check memory pressure and migrate if needed
-        if (isMemoryPressureHigh()) {
+        if (auto_migration_enabled_ && isMemoryPressureHigh()) {
             handleMemoryPressure();
         }
     }
@@ -704,6 +820,53 @@ void MemoryProfiler::recordAllocation(void* ptr, size_t size, MemoryTier tier,
     }
 }
 
+void MemoryProfiler::recordDeallocation(void* ptr, double time_ms) {
+    if (!profiling_enabled_) return;
+
+    total_deallocations_++;
+
+    // Update average deallocation time
+    double old_avg = avg_deallocation_time_.load();
+    double new_avg = (old_avg * (total_deallocations_ - 1) + time_ms) / total_deallocations_;
+    avg_deallocation_time_.store(new_avg);
+
+    // Record trace
+    std::lock_guard<std::mutex> lock(trace_mutex_);
+    AllocationTrace trace;
+    trace.timestamp = std::chrono::steady_clock::now();
+    trace.size = 0; // Size not relevant for deallocation
+    trace.tier = MemoryTier::GPU_DEVICE; // Default, not used for deallocation
+    trace.pattern = AccessPattern::RANDOM; // Default, not used for deallocation
+    trace.ptr = ptr;
+    trace.is_allocation = false;
+
+    trace_log_.push_back(trace);
+
+    // Limit trace log size
+    if (trace_log_.size() > 10000) {
+        trace_log_.erase(trace_log_.begin());
+    }
+}
+
+void MemoryProfiler::recordMigration(void* ptr, MemoryTier from_tier, MemoryTier to_tier, double time_ms) {
+    if (!profiling_enabled_) return;
+
+    memory_migrations_++;
+
+    // Update average migration time
+    double old_avg = avg_migration_time_.load();
+    double new_avg = (old_avg * (memory_migrations_ - 1) + time_ms) / memory_migrations_;
+    avg_migration_time_.store(new_avg);
+
+    // Could record migration trace if needed for detailed analysis
+}
+
+void MemoryProfiler::recordFailedAllocation(size_t size, MemoryTier tier) {
+    if (!profiling_enabled_) return;
+
+    failed_allocations_++;
+}
+
 void MassiveMemoryManager::recordAllocation(MemoryBlock* block) {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     global_stats_.current_usage += block->size;
@@ -765,6 +928,315 @@ bool ParticleMemoryAllocator::resizeParticleArrays(size_t new_count) {
     // Need to reallocate larger arrays
     cleanup();
     return initialize(new_count * 1.5, particle_size_); // 50% growth
+}
+
+// Storage-backed cache implementation
+bool MassiveMemoryManager::enableStorageSpill(const std::string& cache_directory) {
+    storage_cache_directory_ = cache_directory;
+    storage_spill_enabled_ = true;
+
+    // Create cache directory if it doesn't exist
+    try {
+        std::filesystem::create_directories(cache_directory);
+        return true;
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Failed to create storage cache directory: " << e.what() << std::endl;
+        storage_spill_enabled_ = false;
+        return false;
+    }
+}
+
+bool MassiveMemoryManager::spillToStorage(MemoryBlock* block) {
+    if (!storage_spill_enabled_ || !block || !block->ptr) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(storage_cache_mutex_);
+
+    // Generate unique filename
+    std::string filename = storage_cache_directory_ + "/cache_" +
+                          std::to_string(storage_cache_file_counter_++) + ".bin";
+
+    // Write memory block to file
+    std::ofstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    file.write(static_cast<const char*>(block->ptr), block->size);
+    file.close();
+
+    if (file.bad()) {
+        std::filesystem::remove(filename);
+        return false;
+    }
+
+    // Store mapping from memory pointer to file
+    storage_cache_files_[block->ptr] = filename;
+
+    // Update statistics
+    global_stats_.storage_cache_usage += block->size;
+
+    logMemoryOperation("SPILL_TO_STORAGE", block);
+    return true;
+}
+
+bool MassiveMemoryManager::reclaimFromStorage(MemoryBlock* block) {
+    if (!storage_spill_enabled_ || !block || !block->ptr) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(storage_cache_mutex_);
+
+    auto it = storage_cache_files_.find(block->ptr);
+    if (it == storage_cache_files_.end()) {
+        return false;
+    }
+
+    const std::string& filename = it->second;
+
+    // Read data back from file
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    file.read(static_cast<char*>(block->ptr), block->size);
+    file.close();
+
+    if (file.bad()) {
+        return false;
+    }
+
+    // Remove cache file and mapping
+    std::filesystem::remove(filename);
+    storage_cache_files_.erase(it);
+
+    // Update statistics
+    global_stats_.storage_cache_usage -= block->size;
+
+    logMemoryOperation("RECLAIM_FROM_STORAGE", block);
+    return true;
+}
+
+bool MassiveMemoryManager::migrateBlock(MemoryBlock* block, MemoryTier target_tier) {
+    if (!block || block->tier == target_tier) {
+        return false;
+    }
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    // For storage cache migrations, use spill/reclaim
+    if (target_tier == MemoryTier::STORAGE_CACHE) {
+        bool success = spillToStorage(block);
+        if (success) {
+            // Free the original memory but keep the block metadata
+            deallocateFromTier(block);
+            block->tier = MemoryTier::STORAGE_CACHE;
+        }
+        return success;
+    } else if (block->tier == MemoryTier::STORAGE_CACHE) {
+        // Allocate new memory in target tier
+        MemoryBlock* new_block = allocateFromTier(block->size, target_tier,
+                                                 block->pattern, block->alignment);
+        if (!new_block) {
+            return false;
+        }
+
+        // Reclaim data from storage
+        void* temp_ptr = block->ptr;
+        block->ptr = new_block->ptr;
+        bool success = reclaimFromStorage(block);
+
+        if (success) {
+            // Update block metadata
+            block->tier = target_tier;
+            // Copy other metadata from new_block
+            block->ptr = new_block->ptr;
+        } else {
+            // Restore original state
+            block->ptr = temp_ptr;
+            deallocateFromTier(new_block);
+            return false;
+        }
+
+        return success;
+    } else {
+        // Standard memory-to-memory migration
+        MemoryBlock* new_block = allocateFromTier(block->size, target_tier,
+                                                 block->pattern, block->alignment);
+        if (!new_block) {
+            return false;
+        }
+
+        // Copy data between memory tiers
+        #ifdef HAVE_CUDA
+        cudaError_t result = cudaMemcpy(new_block->ptr, block->ptr, block->size, cudaMemcpyDefault);
+        if (result != cudaSuccess) {
+            deallocateFromTier(new_block);
+            return false;
+        }
+        #else
+        memcpy(new_block->ptr, block->ptr, block->size);
+        #endif
+
+        // Free old memory and update block
+        deallocateFromTier(block);
+        *block = *new_block;
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        double migration_time = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+
+        profiler_->recordMigration(block->ptr, block->tier, target_tier, migration_time);
+        logMemoryOperation("MIGRATE", block);
+
+        return true;
+    }
+}
+
+bool MassiveMemoryManager::handleMemoryPressure() {
+    auto stats = getGlobalStats();
+
+    if (stats.gpu_device_usage <= memory_pressure_threshold_) {
+        return true; // No action needed
+    }
+
+    // Find blocks to migrate from GPU to lower tiers
+    std::vector<MemoryBlock*> migration_candidates;
+
+    {
+        std::lock_guard<std::mutex> lock(allocation_mutex_);
+        for (const auto& allocation : active_allocations_) {
+            MemoryBlock* block = allocation.second;
+            if (block->tier == MemoryTier::GPU_DEVICE &&
+                block->pattern != AccessPattern::PERSISTENT) {
+
+                // Prioritize by last access time (LRU)
+                auto time_since_access = std::chrono::steady_clock::now() - block->last_access;
+                if (time_since_access > std::chrono::seconds(10)) {
+                    migration_candidates.push_back(block);
+                }
+            }
+        }
+    }
+
+    // Sort by last access time (oldest first)
+    std::sort(migration_candidates.begin(), migration_candidates.end(),
+        [](const MemoryBlock* a, const MemoryBlock* b) {
+            return a->last_access < b->last_access;
+        });
+
+    // Migrate oldest blocks to relieve pressure
+    size_t bytes_to_migrate = stats.gpu_device_usage - memory_pressure_threshold_;
+    size_t bytes_migrated = 0;
+
+    for (MemoryBlock* block : migration_candidates) {
+        if (bytes_migrated >= bytes_to_migrate) {
+            break;
+        }
+
+        // Try migrating to unified memory first, then CPU pinned
+        MemoryTier target_tier = MemoryTier::GPU_UNIFIED;
+        if (!migrateBlock(block, target_tier)) {
+            target_tier = MemoryTier::CPU_PINNED;
+            if (!migrateBlock(block, target_tier)) {
+                target_tier = MemoryTier::STORAGE_CACHE;
+                migrateBlock(block, target_tier);
+            }
+        }
+
+        bytes_migrated += block->size;
+    }
+
+    return bytes_migrated > 0;
+}
+
+void MassiveMemoryManager::configureCachePolicy(MemoryTier tier, float cache_ratio) {
+    // Configure cache policies for different memory tiers
+    switch (tier) {
+        case MemoryTier::GPU_DEVICE:
+            // Aggressive caching for GPU memory
+            setPoolSizes(tier, max_gpu_memory_ * cache_ratio);
+            break;
+        case MemoryTier::GPU_UNIFIED:
+            setPoolSizes(tier, max_gpu_memory_ * cache_ratio * 0.5f);
+            break;
+        case MemoryTier::CPU_PINNED:
+            setPoolSizes(tier, max_cpu_memory_ * cache_ratio * 0.3f);
+            break;
+        case MemoryTier::CPU_PAGED:
+            setPoolSizes(tier, max_cpu_memory_ * cache_ratio * 0.6f);
+            break;
+        case MemoryTier::STORAGE_CACHE:
+            setPoolSizes(tier, max_storage_cache_ * cache_ratio);
+            break;
+    }
+}
+
+void MassiveMemoryManager::setPoolSizes(MemoryTier tier, size_t max_size) {
+    // Update pool size limits
+    switch (tier) {
+        case MemoryTier::GPU_DEVICE:
+            if (gpu_device_pool_) {
+                gpu_device_pool_->setMaxBlocks(max_size / (1024 * 1024)); // Convert to MB blocks
+            }
+            break;
+        case MemoryTier::GPU_UNIFIED:
+            if (gpu_unified_pool_) {
+                gpu_unified_pool_->setMaxBlocks(max_size / (1024 * 1024));
+            }
+            break;
+        case MemoryTier::CPU_PINNED:
+            if (cpu_pinned_pool_) {
+                cpu_pinned_pool_->setMaxBlocks(max_size / (1024 * 1024));
+            }
+            break;
+        case MemoryTier::CPU_PAGED:
+            if (cpu_paged_pool_) {
+                cpu_paged_pool_->setMaxBlocks(max_size / (1024 * 1024));
+            }
+            break;
+        case MemoryTier::STORAGE_CACHE:
+            if (storage_cache_pool_) {
+                storage_cache_pool_->setMaxBlocks(max_size / (1024 * 1024));
+            }
+            break;
+    }
+}
+
+size_t MassiveMemoryManager::alignSize(size_t size, size_t alignment) {
+    return ((size + alignment - 1) / alignment) * alignment;
+}
+
+void MassiveMemoryManager::logMemoryOperation(const std::string& operation, MemoryBlock* block) {
+    // Optional logging for debugging
+    #ifdef DEBUG_MEMORY_OPERATIONS
+    std::cout << "[MEMORY] " << operation << " - Tier: " << static_cast<int>(block->tier)
+              << ", Size: " << block->size << " bytes, Ptr: " << block->ptr << std::endl;
+    #endif
+}
+
+void MassiveMemoryManager::enterEmergencyMode() {
+    emergency_mode_ = true;
+
+    // Aggressive memory reclamation
+    handleMemoryPressure();
+
+    // Enable storage spill if not already enabled
+    if (!storage_spill_enabled_) {
+        enableStorageSpill("/tmp/physgrad_emergency_cache");
+    }
+
+    std::cout << "WARNING: PhysGrad Memory Manager entered emergency mode due to memory pressure!" << std::endl;
+}
+
+void MassiveMemoryManager::exitEmergencyMode() {
+    emergency_mode_ = false;
+    std::cout << "PhysGrad Memory Manager exited emergency mode." << std::endl;
+}
+
+void MassiveMemoryManager::setMemoryPressureThreshold(float threshold) {
+    memory_pressure_threshold_ = max_gpu_memory_ * threshold;
 }
 
 } // namespace physgrad

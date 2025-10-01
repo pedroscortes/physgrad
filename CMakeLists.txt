@@ -1,16 +1,30 @@
 cmake_minimum_required(VERSION 3.18)
 project(PhysGrad VERSION 1.0.0 LANGUAGES CXX CUDA)
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
+# Set C++ standard (upgraded to C++20 for concepts)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Set CUDA standard
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-# Options
+# Enhanced project options
+option(PHYSGRAD_ENABLE_CUDA "Enable CUDA support" ON)
+option(PHYSGRAD_ENABLE_PYTORCH "Enable PyTorch integration" ON)
+option(PHYSGRAD_ENABLE_VISUALIZATION "Enable OpenGL/ImGui visualization" ON)
+option(PHYSGRAD_ENABLE_PYTHON "Build Python bindings" ON)
+option(PHYSGRAD_ENABLE_TESTS "Build comprehensive test suite" ON)
+option(PHYSGRAD_ENABLE_DEMOS "Build demonstration programs" ON)
+option(PHYSGRAD_ENABLE_BENCHMARKS "Build performance benchmarks" ON)
+option(PHYSGRAD_ENABLE_DOCUMENTATION "Build documentation" OFF)
+option(PHYSGRAD_ENABLE_SANITIZERS "Enable address/thread sanitizers" OFF)
+option(PHYSGRAD_AUTO_DETECT_CUDA_ARCH "Auto-detect CUDA architecture" ON)
+
+# Legacy compatibility aliases
 option(WITH_CUDA "Enable CUDA support" ON)
+option(WITH_PYTORCH "Enable PyTorch integration" ON)
 option(WITH_VISUALIZATION "Enable OpenGL/ImGui visualization" ON)
 option(WITH_PYTHON "Build Python bindings" ON)
 option(BUILD_TESTS "Build test suite" ON)
@@ -30,8 +44,31 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native")
 set(CMAKE_CUDA_FLAGS_DEBUG "-g -G -O0")
 set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -DNDEBUG --use_fast_math")
 
-# CUDA architectures (adjust based on your GPU)
-set(CMAKE_CUDA_ARCHITECTURES "70;75;80;86")
+# CUDA architecture detection
+if(PHYSGRAD_AUTO_DETECT_CUDA_ARCH)
+    include(cmake/DetectCUDAArchitecture.cmake)
+    detect_cuda_architecture(DETECTED_CUDA_ARCHITECTURES)
+    if(DETECTED_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES ${DETECTED_CUDA_ARCHITECTURES})
+        message(STATUS "Auto-detected CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+    else()
+        # Fallback to sensible defaults based on CUDA version
+        if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL "12.0")
+            set(CMAKE_CUDA_ARCHITECTURES "70;75;80;86;89;90")  # Volta, Turing, Ampere, Ada, Hopper
+        elseif(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL "11.0")
+            set(CMAKE_CUDA_ARCHITECTURES "70;75;80;86")  # Volta, Turing, Ampere
+        else()
+            set(CMAKE_CUDA_ARCHITECTURES "60;70;75")  # Pascal, Volta, Turing
+        endif()
+        message(STATUS "Using fallback CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+    endif()
+else()
+    # Manual override - can be set via environment variable or cmake option
+    if(NOT CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "89")  # Default for RTX 2000 Ada
+    endif()
+    message(STATUS "Using manual CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+endif()
 
 # Find required packages
 find_package(Eigen3 REQUIRED)
@@ -62,6 +99,55 @@ endif()
 if(WITH_PYTHON)
     find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
     find_package(pybind11 REQUIRED)
+endif()
+
+# PyTorch detection
+if(WITH_PYTORCH)
+    # Get PyTorch CMake prefix path from Python installation
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -c "import torch; print(torch.utils.cmake_prefix_path)"
+        OUTPUT_VARIABLE TORCH_CMAKE_PREFIX_PATH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE TORCH_PYTHON_RESULT
+    )
+
+    if(TORCH_PYTHON_RESULT EQUAL 0 AND TORCH_CMAKE_PREFIX_PATH)
+        # Use PyTorch's proper CMake configuration
+        set(CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX_PATH};${CMAKE_PREFIX_PATH}")
+        find_package(Torch QUIET)
+
+        if(Torch_FOUND)
+            set(TORCH_FOUND TRUE)
+            message(STATUS "Found PyTorch via Python CMake path")
+
+            # Check if CUDA support is available
+            execute_process(
+                COMMAND ${Python3_EXECUTABLE} -c "import torch; print(torch.cuda.is_available())"
+                OUTPUT_VARIABLE PYTORCH_CUDA_AVAILABLE
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+
+            if(PYTORCH_CUDA_AVAILABLE STREQUAL "True")
+                set(TORCH_CUDA_FOUND TRUE)
+                message(STATUS "  PyTorch CUDA support: YES")
+            else()
+                set(TORCH_CUDA_FOUND FALSE)
+                message(STATUS "  PyTorch CUDA support: NO")
+            endif()
+        endif()
+    endif()
+
+    if(NOT TORCH_FOUND)
+        message(WARNING "PyTorch not found - ML features will be disabled")
+        set(WITH_PYTORCH OFF)
+    else()
+        add_definitions(-DHAVE_PYTORCH)
+        if(TORCH_CUDA_FOUND)
+            add_definitions(-DHAVE_PYTORCH_CUDA)
+        endif()
+    endif()
 endif()
 
 # Include directories
@@ -199,6 +285,18 @@ target_link_libraries(physgrad_core
     $<$<BOOL:${WITH_VISUALIZATION}>:${GLEW_LIBRARIES}>
 )
 
+# Link PyTorch if available (using proper target-based linking)
+if(WITH_PYTORCH AND TORCH_FOUND)
+    target_link_libraries(physgrad_core ${TORCH_LIBRARIES})
+    if(TORCH_CUDA_FOUND)
+        # Add CUDA runtime for proper linking
+        find_package(CUDAToolkit QUIET)
+        if(CUDAToolkit_FOUND)
+            target_link_libraries(physgrad_core CUDA::cudart)
+        endif()
+    endif()
+endif()
+
 if(WITH_CUDA)
     target_link_libraries(physgrad_core
         physgrad_kernels
@@ -290,6 +388,7 @@ endif()
 message(STATUS "PhysGrad Configuration Summary:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  CUDA support: ${WITH_CUDA}")
+message(STATUS "  PyTorch support: ${WITH_PYTORCH}")
 message(STATUS "  Visualization: ${WITH_VISUALIZATION}")
 message(STATUS "  Python bindings: ${WITH_PYTHON}")
 message(STATUS "  Build tests: ${BUILD_TESTS}")
