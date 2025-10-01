@@ -1,7 +1,17 @@
 #pragma once
 
+#ifdef __CUDACC__
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
+#else
+// Mock CUDA types for CPU compilation
+struct float3 { float x, y, z; };
+struct dim3 { unsigned int x, y, z; dim3(unsigned int x=1, unsigned int y=1, unsigned int z=1) : x(x), y(y), z(z) {} };
+enum cudaMemcpyKind { cudaMemcpyDeviceToDevice = 0 };
+using cudaError_t = int;
+using cudaStream_t = void*;
+#endif
+
 #include <vector>
 #include <memory>
 
@@ -55,6 +65,7 @@ public:
     );
 };
 
+#ifdef __CUDACC__
 // Optimized memory access primitives
 namespace optimized_access {
 
@@ -86,6 +97,7 @@ __device__ __forceinline__ void shared_memory_load_store(
 );
 
 } // namespace optimized_access
+#endif // __CUDACC__
 
 // AoSoA (Array of Structures of Arrays) data structure
 template<typename T, int VECTOR_SIZE = 4>
@@ -103,8 +115,13 @@ public:
     ~AoSoAContainer();
 
     // Memory-optimized access
+#ifdef __CUDACC__
     __device__ __host__ T* getVectorPtr(size_t element_id, int vector_component);
     __device__ __host__ const T* getVectorPtr(size_t element_id, int vector_component) const;
+#else
+    T* getVectorPtr(size_t element_id, int vector_component);
+    const T* getVectorPtr(size_t element_id, int vector_component) const;
+#endif
 
     // Bulk operations with optimal memory patterns
     void copyToDevice(const std::vector<T>& host_data);
@@ -119,10 +136,14 @@ public:
 class MortonOrderOptimizer {
 public:
     // Convert 3D coordinates to Morton order index
+#ifdef __CUDACC__
     __device__ __host__ static uint64_t encode3D(uint32_t x, uint32_t y, uint32_t z);
-
     // Convert Morton order index back to 3D coordinates
     __device__ __host__ static void decode3D(uint64_t morton, uint32_t& x, uint32_t& y, uint32_t& z);
+#else
+    static uint64_t encode3D(uint32_t x, uint32_t y, uint32_t z);
+    static void decode3D(uint64_t morton, uint32_t& x, uint32_t& y, uint32_t& z);
+#endif
 
     // Reorder particle data for better spatial locality
     template<typename ParticleData>
@@ -167,6 +188,7 @@ public:
     );
 };
 
+#ifdef __CUDACC__
 // Warp-level memory optimization primitives
 namespace warp_optimized {
 
@@ -191,6 +213,7 @@ template<typename T>
 __device__ __forceinline__ T warp_scan_inclusive(T value);
 
 } // namespace warp_optimized
+#endif // __CUDACC__
 
 // Memory bandwidth benchmark and optimization
 class MemoryBandwidthOptimizer {
@@ -240,11 +263,16 @@ public:
     ~CacheOptimizedArray();
 
     // Cache-aligned access
+#ifdef __CUDACC__
     __device__ __host__ T& operator[](size_t index);
     __device__ __host__ const T& operator[](size_t index) const;
-
     // Prefetch operations
     __device__ void prefetch(size_t index, int cache_level = 1);
+#else
+    T& operator[](size_t index);
+    const T& operator[](size_t index) const;
+    void prefetch(size_t index, int cache_level = 1);
+#endif
 
     // Memory pattern hints
     void setAccessPattern(MemoryAccessPattern pattern);
