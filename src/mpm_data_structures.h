@@ -25,25 +25,29 @@
 #define CUDA_HOST
 #endif
 
-// Basic type definitions for CUDA compatibility
+// Vector template (always defined)
+template<typename T>
+struct vec3 {
+    T x, y, z;
+    CUDA_HOST_DEVICE vec3() : x(0), y(0), z(0) {}
+    CUDA_HOST_DEVICE vec3(T x_, T y_, T z_) : x(x_), y(y_), z(z_) {}
+};
+
+template<typename T>
+using T3 = vec3<T>;
+
+// Only define these types when NOT compiling with CUDA
+// (CUDA provides its own int3, float3, double3)
+#ifndef __CUDACC__
 struct int3 {
     int x, y, z;
     int3() = default;
     int3(int x_, int y_, int z_) : x(x_), y(y_), z(z_) {}
 };
 
-template<typename T>
-struct vec3 {
-    T x, y, z;
-    vec3() = default;
-    vec3(T x_, T y_, T z_) : x(x_), y(y_), z(z_) {}
-};
-
 using float3 = vec3<float>;
 using double3 = vec3<double>;
-
-template<typename T>
-using T3 = vec3<T>;
+#endif
 
 namespace physgrad::mpm {
 

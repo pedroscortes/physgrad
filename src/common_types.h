@@ -14,7 +14,7 @@
 
 // Include C++20 concepts when available
 #if __cplusplus >= 202002L
-    #include "concepts/forward_declarations.h"
+    #include "concepts/physics_concepts.h"
     #define PHYSGRAD_CONCEPTS_AVAILABLE
 #endif
 

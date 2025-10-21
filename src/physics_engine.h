@@ -14,7 +14,8 @@
 
 // Include concepts when available
 #ifdef PHYSGRAD_CONCEPTS_AVAILABLE
-    #include "concepts/forward_declarations.h"
+    #include "concepts/physics_concepts.h"
+    #include "concepts/type_traits.h"
 #endif
 
 namespace physgrad {
@@ -102,7 +103,7 @@ public:
 
     // Automatically optimize container based on expected particle count
     template<size_t expected_count = 10000>
-    using optimized_container = optimal_particle_container<ScalarT, expected_count>;
+    using optimized_container = typename type_traits::optimal_particle_container<particle_type, expected_count>::type;
 
     ConceptPhysicsEngine() {
         // Basic compile-time validation

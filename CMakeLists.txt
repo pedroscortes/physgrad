@@ -16,11 +16,11 @@ option(PHYSGRAD_ENABLE_PYTORCH "Enable PyTorch integration" ON)
 option(PHYSGRAD_ENABLE_VISUALIZATION "Enable OpenGL/ImGui visualization" ON)
 option(PHYSGRAD_ENABLE_PYTHON "Build Python bindings" ON)
 option(PHYSGRAD_ENABLE_TESTS "Build comprehensive test suite" ON)
-option(PHYSGRAD_ENABLE_DEMOS "Build demonstration programs" ON)
+option(PHYSGRAD_ENABLE_DEMOS "Build demonstration programs" OFF)  # Disabled - demo files don't exist yet
 option(PHYSGRAD_ENABLE_BENCHMARKS "Build performance benchmarks" ON)
 option(PHYSGRAD_ENABLE_DOCUMENTATION "Build documentation" OFF)
 option(PHYSGRAD_ENABLE_SANITIZERS "Enable address/thread sanitizers" OFF)
-option(PHYSGRAD_AUTO_DETECT_CUDA_ARCH "Auto-detect CUDA architecture" ON)
+option(PHYSGRAD_AUTO_DETECT_CUDA_ARCH "Auto-detect CUDA architecture" OFF)  # Disabled - detection failing
 
 # Legacy compatibility aliases
 option(WITH_CUDA "Enable CUDA support" ON)
@@ -28,7 +28,7 @@ option(WITH_PYTORCH "Enable PyTorch integration" ON)
 option(WITH_VISUALIZATION "Enable OpenGL/ImGui visualization" ON)
 option(WITH_PYTHON "Build Python bindings" ON)
 option(BUILD_TESTS "Build test suite" ON)
-option(BUILD_DEMOS "Build demonstration programs" ON)
+option(BUILD_DEMOS "Build demonstration programs" OFF)  # Disabled - demo files don't exist yet
 option(BUILD_BENCHMARKS "Build performance benchmarks" ON)
 
 # Build type
@@ -76,7 +76,17 @@ find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
 
 if(WITH_CUDA)
+    # Force CMake to use CUDA 12.1 instead of system CUDA 11.x
+    set(CUDAToolkit_ROOT "/usr/local/cuda-12.1")
     find_package(CUDAToolkit REQUIRED)
+    message(STATUS "Using CUDAToolkit from: ${CUDAToolkit_ROOT}")
+
+    # Override CUDA::cudart to use CUDA 12.1 (will be overridden again by PyTorch if enabled)
+    set_target_properties(CUDA::cudart PROPERTIES
+        IMPORTED_LOCATION "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12.1.55"
+        INTERFACE_LINK_LIBRARIES ""
+    )
+    message(STATUS "Using CUDA 12.1 runtime (may be overridden by PyTorch)")
 
     # Find CUDA libraries
     find_library(CUDNN_LIBRARY cudnn HINTS ${CUDAToolkit_LIBRARY_DIR})
@@ -113,6 +123,13 @@ if(WITH_PYTORCH)
     )
 
     if(TORCH_PYTHON_RESULT EQUAL 0 AND TORCH_CMAKE_PREFIX_PATH)
+        # Override CUDA architectures BEFORE finding PyTorch to prevent sm_35/sm_50 injection
+        # PyTorch auto-detects architectures including old ones unsupported in CUDA 12.x
+        set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "CUDA architectures" FORCE)
+        set(TORCH_CUDA_ARCH_LIST "8.6" CACHE STRING "PyTorch CUDA architectures" FORCE)
+        message(STATUS "Pre-setting CUDA architectures before PyTorch: ${CMAKE_CUDA_ARCHITECTURES}")
+        message(STATUS "Setting TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST}")
+
         # Use PyTorch's proper CMake configuration
         set(CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX_PATH};${CMAKE_PREFIX_PATH}")
         find_package(Torch QUIET)
@@ -120,6 +137,19 @@ if(WITH_PYTORCH)
         if(Torch_FOUND)
             set(TORCH_FOUND TRUE)
             message(STATUS "Found PyTorch via Python CMake path")
+
+            # Override CUDA::cudart to use PyTorch's bundled runtime
+            # PyTorch bundles newer CUDA 12.x with symbols not in system CUDA 12.1
+            if(WITH_CUDA)
+                set(PYTORCH_CUDART "$ENV{HOME}/.local/lib/python3.10/site-packages/nvidia/cuda_runtime/lib/libcudart.so.12")
+                if(EXISTS "${PYTORCH_CUDART}")
+                    set_target_properties(CUDA::cudart PROPERTIES
+                        IMPORTED_LOCATION "${PYTORCH_CUDART}"
+                        INTERFACE_LINK_LIBRARIES ""
+                    )
+                    message(STATUS "Overriding CUDA::cudart with PyTorch's runtime: ${PYTORCH_CUDART}")
+                endif()
+            endif()
 
             # Check if CUDA support is available
             execute_process(
@@ -170,7 +200,7 @@ endif()
 set(PHYSGRAD_SOURCES
     # Original contact mechanics
     src/variational_contact.cpp
-    src/differentiable_contact.cpp
+    # src/differentiable_contact.cpp  # Template class - header-only (implementation in .h)
     src/rigid_body.cpp
     src/symplectic_integrators.cpp
     src/constraints.cpp
@@ -181,7 +211,7 @@ set(PHYSGRAD_SOURCES
     src/contact_mechanics.cpp
     src/fluid_dynamics.cpp
     # src/soft_body_dynamics.cpp  # Temporarily disabled due to thrust usage
-    src/electromagnetic_fields.cpp
+    # src/electromagnetic_fields.cpp  # Temporarily disabled - missing sph_fluid_dynamics.h
     src/multi_scale_physics.cpp
     src/gpu_memory_manager.cpp
     # src/mpi_physics.cpp  # Temporarily disabled - requires MPI
@@ -200,35 +230,50 @@ set(PHYSGRAD_CUDA_SOURCES
     src/simulation.cu
     src/stability_improvements.cu
 
-    # New CUDA kernels
+    # New CUDA kernels (only existing files that compile)
     src/physics_kernels.cu
     src/contact_kernels.cu
     src/fluid_kernels.cu
-    src/softbody_kernels.cu
-    src/electromagnetic_kernels.cu
-    src/electromagnetic_fields_gpu.cu
-    # src/soft_body_dynamics_gpu.cu  # Temporarily disabled
-    src/memory_kernels.cu
-    src/neural_kernels.cu
-    src/symbolic_kernels.cu
-    src/generative_kernels.cu
-    src/quantum_kernels.cu
+    # src/electromagnetic_fields_gpu.cu  # Missing dependency: sph_fluid_dynamics.h
+    src/adjoint_kernels.cu
+    src/pytorch_autograd.cu  # ✅ Re-enabled with PyTorch integration
+    src/mpm_kernels.cu  # ✅ Fixed T3 template usage
+    # src/mpm_g2p2g_kernels.cu  # Requires cuda_cooperative_groups.h (CUDA 9.0+)
+    src/memory_optimization_kernels.cu  # ✅ Re-enabled - kernel implementations
+    src/memory_optimization.cu  # ✅ Re-enabled - fixed device launch issue
+    src/kernel_wrappers.cu  # ✅ Re-enabled - depends on memory_optimization
+    # src/multi_gpu.cu  # Requires NCCL library
+    # src/domain_decomposition.cu  # Part of multi-GPU suite
+    # src/gpu_communication.cu  # Part of multi-GPU suite
+    # src/load_balancer.cu  # Part of multi-GPU suite
+
+    # Disabled - files don't exist:
+    # src/softbody_kernels.cu
+    # src/electromagnetic_kernels.cu
+    # src/soft_body_dynamics_gpu.cu
+    # src/memory_kernels.cu
+    # src/neural_kernels.cu
+    # src/symbolic_kernels.cu
+    # src/generative_kernels.cu
+    # src/quantum_kernels.cu
 )
 
 # Demonstration programs
+# DISABLED - None of these files exist yet
+# TODO: Create demo programs as part of Phase 3 implementation
 set(DEMO_SOURCES
-    demo_contact_mechanics.cu
-    demo_fluid_dynamics.cu
-    demo_soft_body_dynamics.cu
-    demo_electromagnetic_fields.cu
-    demo_multi_scale_physics.cu
-    demo_gpu_memory_management.cu
-    demo_mpi_physics.cu
-    demo_physics_streaming.cu
-    demo_neural_fluid_dynamics.cu
-    demo_symbolic_physics_ai.cu
-    demo_physics_generative_models.cu
-    demo_quantum_classical_coupling.cu
+    # demo_contact_mechanics.cu
+    # demo_fluid_dynamics.cu
+    # demo_soft_body_dynamics.cu
+    # demo_electromagnetic_fields.cu
+    # demo_multi_scale_physics.cu
+    # demo_gpu_memory_management.cu
+    # demo_mpi_physics.cu
+    # demo_physics_streaming.cu
+    # demo_neural_fluid_dynamics.cu
+    # demo_symbolic_physics_ai.cu
+    # demo_physics_generative_models.cu
+    # demo_quantum_classical_coupling.cu
 )
 
 if(WITH_VISUALIZATION)

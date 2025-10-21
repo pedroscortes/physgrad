@@ -444,22 +444,19 @@ MemoryBandwidthOptimizer::BandwidthResult MemoryBandwidthOptimizer::benchmarkAcc
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // Forward declare the bandwidth benchmark kernel from memory_optimization_kernels.cu
+    extern __global__ void bandwidth_benchmark_kernel(
+        float* __restrict__ output,
+        const float* __restrict__ input,
+        size_t num_elements,
+        MemoryAccessPattern pattern
+    );
+
     for (int i = 0; i < iterations; ++i) {
-        switch (pattern) {
-            case MemoryAccessPattern::COALESCED_SEQUENTIAL:
-                optimized_access::vectorized_load<float, 4><<<grid_size, block_size>>>(
-                    d_output, d_data, data_size);
-                break;
-
-            case MemoryAccessPattern::STRIDED_REGULAR:
-                // Custom strided access kernel would go here
-                break;
-
-            default:
-                // Default to simple copy
-                cudaMemcpy(d_output, d_data, data_size * sizeof(float), cudaMemcpyDeviceToDevice);
-                break;
-        }
+        // Use the proper __global__ kernel instead of trying to launch __device__ functions
+        bandwidth_benchmark_kernel<<<grid_size, block_size>>>(
+            d_output, d_data, data_size, pattern
+        );
     }
 
     cudaDeviceSynchronize();

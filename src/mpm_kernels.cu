@@ -265,8 +265,8 @@ __global__ void fusedG2P2GKernel(
 
     // Simulation parameters
     int3 grid_dims,
-    T3 grid_spacing,
-    T3 grid_origin,
+    T3<T> grid_spacing,
+    T3<T> grid_origin,
     T dt,
     int num_particles,
     MaterialParameters* material_params
@@ -278,13 +278,13 @@ __global__ void fusedG2P2GKernel(
     if (!particle_active[particle_id]) return;
 
     // Load particle data
-    T3 pos = {
+    T3<T> pos = {
         particle_positions[particle_id * 3 + 0],
         particle_positions[particle_id * 3 + 1],
         particle_positions[particle_id * 3 + 2]
     };
 
-    T3 vel = {
+    T3<T> vel = {
         particle_velocities[particle_id * 3 + 0],
         particle_velocities[particle_id * 3 + 1],
         particle_velocities[particle_id * 3 + 2]
@@ -308,7 +308,7 @@ __global__ void fusedG2P2GKernel(
     };
 
     // Grid-to-Particle (G2P) interpolation
-    T3 grid_velocity = {0, 0, 0};
+    T3<T> grid_velocity = {0, 0, 0};
     T velocity_gradient[9] = {0};  // ∇v
 
     // Loop over neighboring grid nodes (3x3x3 stencil for quadratic B-splines)
@@ -328,13 +328,13 @@ __global__ void fusedG2P2GKernel(
                                  static_cast<size_t>(gj) * grid_dims.x + static_cast<size_t>(gi);
 
                 // Compute shape function and gradient
-                T3 grid_world_pos = {
+                T3<T> grid_world_pos = {
                     grid_origin.x + gi * grid_spacing.x,
                     grid_origin.y + gj * grid_spacing.y,
                     grid_origin.z + gk * grid_spacing.z
                 };
 
-                T3 xi = {
+                T3<T> xi = {
                     (pos.x - grid_world_pos.x) / grid_spacing.x,
                     (pos.y - grid_world_pos.y) / grid_spacing.y,
                     (pos.z - grid_world_pos.z) / grid_spacing.z
@@ -351,10 +351,10 @@ __global__ void fusedG2P2GKernel(
                 T dNy = ShapeFunctions<T>::quadratic_gradient(xi.y) / grid_spacing.y;
                 T dNz = ShapeFunctions<T>::quadratic_gradient(xi.z) / grid_spacing.z;
 
-                T3 grad_N = {dNx * Ny * Nz, Nx * dNy * Nz, Nx * Ny * dNz};
+                T3<T> grad_N = {dNx * Ny * Nz, Nx * dNy * Nz, Nx * Ny * dNz};
 
                 // Interpolate grid velocity to particle
-                T3 node_vel = {
+                T3<T> node_vel = {
                     grid_velocities[grid_idx * 3 + 0],
                     grid_velocities[grid_idx * 3 + 1],
                     grid_velocities[grid_idx * 3 + 2]
@@ -451,13 +451,13 @@ __global__ void fusedG2P2GKernel(
                                  static_cast<size_t>(gj) * grid_dims.x + static_cast<size_t>(gi);
 
                 // Recompute shape function
-                T3 grid_world_pos = {
+                T3<T> grid_world_pos = {
                     grid_origin.x + gi * grid_spacing.x,
                     grid_origin.y + gj * grid_spacing.y,
                     grid_origin.z + gk * grid_spacing.z
                 };
 
-                T3 xi = {
+                T3<T> xi = {
                     (pos.x - grid_world_pos.x) / grid_spacing.x,
                     (pos.y - grid_world_pos.y) / grid_spacing.y,
                     (pos.z - grid_world_pos.z) / grid_spacing.z
@@ -472,7 +472,7 @@ __global__ void fusedG2P2GKernel(
                 T dNy = ShapeFunctions<T>::quadratic_gradient(xi.y) / grid_spacing.y;
                 T dNz = ShapeFunctions<T>::quadratic_gradient(xi.z) / grid_spacing.z;
 
-                T3 grad_N = {dNx * Ny * Nz, Nx * dNy * Nz, Nx * Ny * dNz};
+                T3<T> grad_N = {dNx * Ny * Nz, Nx * dNy * Nz, Nx * Ny * dNz};
 
                 // Compute forces from stress divergence
                 T force_x = -volume * (stress[0] * grad_N.x + stress[3] * grad_N.y + stress[4] * grad_N.z);
@@ -502,7 +502,7 @@ __global__ void updateGridKernel(
     const T* __restrict__ grid_forces,
     const uint32_t* __restrict__ boundary_conditions,
     T dt,
-    T3 gravity,
+    T3<T> gravity,
     int total_nodes
 ) {
     int node_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -514,14 +514,14 @@ __global__ void updateGridKernel(
     T inv_mass = 1.0f / mass;
 
     // Convert momentum to velocity
-    T3 velocity = {
+    T3<T> velocity = {
         grid_velocities[node_id * 3 + 0] * inv_mass,
         grid_velocities[node_id * 3 + 1] * inv_mass,
         grid_velocities[node_id * 3 + 2] * inv_mass
     };
 
     // Apply forces (including gravity)
-    T3 acceleration = {
+    T3<T> acceleration = {
         grid_forces[node_id * 3 + 0] * inv_mass + gravity.x,
         grid_forces[node_id * 3 + 1] * inv_mass + gravity.y,
         grid_forces[node_id * 3 + 2] * inv_mass + gravity.z

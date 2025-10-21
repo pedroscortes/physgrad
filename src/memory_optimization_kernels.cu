@@ -12,7 +12,7 @@
 namespace physgrad {
 namespace optimized_access {
 
-using namespace cooperative_groups;
+// Note: cooperative_groups namespace will be used with explicit qualification
 
 // =============================================================================
 // VECTORIZED MEMORY OPERATIONS
@@ -198,7 +198,7 @@ template<typename T>
 __device__ __forceinline__ T warp_coalesced_load(
     const T* __restrict__ addr, int lane_id
 ) {
-    thread_block_tile<32> warp = tiled_partition<32>(this_thread_block());
+    cooperative_groups::thread_block_tile<32> warp = cooperative_groups::tiled_partition<32>(cooperative_groups::this_thread_block());
     return addr[warp.thread_rank()];
 }
 
@@ -211,7 +211,7 @@ __device__ __forceinline__ T warp_shuffle_distribute(
 
 template<typename T, int WARP_SIZE>
 __device__ __forceinline__ T warp_reduce_sum(T value) {
-    thread_block_tile<WARP_SIZE> warp = tiled_partition<WARP_SIZE>(this_thread_block());
+    cooperative_groups::thread_block_tile<WARP_SIZE> warp = cooperative_groups::tiled_partition<WARP_SIZE>(cooperative_groups::this_thread_block());
 
     #pragma unroll
     for (int delta = WARP_SIZE / 2; delta > 0; delta /= 2) {
@@ -223,7 +223,7 @@ __device__ __forceinline__ T warp_reduce_sum(T value) {
 
 template<typename T>
 __device__ __forceinline__ T warp_scan_inclusive(T value) {
-    thread_block_tile<32> warp = tiled_partition<32>(this_thread_block());
+    cooperative_groups::thread_block_tile<32> warp = cooperative_groups::tiled_partition<32>(cooperative_groups::this_thread_block());
 
     #pragma unroll
     for (int delta = 1; delta < 32; delta *= 2) {

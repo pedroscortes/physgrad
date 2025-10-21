@@ -78,7 +78,7 @@ __global__ void mpm_timestep_forward_kernel(
 /**
  * CUDA kernel for MPM timestep backward pass
  */
-__global__ void mmp_timestep_backward_kernel(
+__global__ void mpm_timestep_backward_kernel(
     const float* grad_positions,    // [N, 3] gradient w.r.t output positions
     const float* grad_velocities,   // [N, 3] gradient w.r.t output velocities
     float* grad_input_positions,    // [N, 3] gradient w.r.t input positions
@@ -376,7 +376,7 @@ void launch_mpm_timestep_forward(
     dim3 block(256);
     dim3 grid((num_particles + block.x - 1) / block.x);
 
-    mmp_timestep_forward_kernel<<<grid, block, 0, stream>>>(
+    mpm_timestep_forward_kernel<<<grid, block, 0, stream>>>(
         positions, velocities, masses, num_particles, grid_resolution, dt, gravity
     );
 }
@@ -392,7 +392,7 @@ void launch_mpm_timestep_backward(
     dim3 block(256);
     dim3 grid((num_particles + block.x - 1) / block.x);
 
-    mmp_timestep_backward_kernel<<<grid, block, 0, stream>>>(
+    mpm_timestep_backward_kernel<<<grid, block, 0, stream>>>(
         grad_positions, grad_velocities,
         grad_input_positions, grad_input_velocities,
         grad_masses, grad_gravity,
@@ -407,9 +407,9 @@ void launch_g2p2g_forward(
     cudaStream_t stream
 ) {
     dim3 block(256);
-    dim3 grid((num_particles + block.x - 1) / block.x);
+    dim3 grid_dim((num_particles + block.x - 1) / block.x);
 
-    g2p2g_forward_kernel<<<grid, block, 0, stream>>>(
+    g2p2g_forward_kernel<<<grid_dim, block, 0, stream>>>(
         particles, grid, output, num_particles, grid_size, feature_dim
     );
 }
@@ -422,9 +422,9 @@ void launch_g2p2g_backward(
     cudaStream_t stream
 ) {
     dim3 block(256);
-    dim3 grid((num_particles + block.x - 1) / block.x);
+    dim3 grid_dim((num_particles + block.x - 1) / block.x);
 
-    g2p2g_backward_kernel<<<grid, block, 0, stream>>>(
+    g2p2g_backward_kernel<<<grid_dim, block, 0, stream>>>(
         grad_output, grad_particles, grad_grid,
         saved_particles, saved_grid,
         num_particles, grid_size, feature_dim

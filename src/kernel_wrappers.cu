@@ -1,4 +1,29 @@
 #include "memory_optimization.h"
+#include <cstdio>
+
+// Forward declare kernels from memory_optimization.cu
+extern __global__ void optimized_force_computation_kernel(
+    const float4* __restrict__ positions,
+    const float* __restrict__ charges,
+    float4* __restrict__ forces,
+    int num_particles
+);
+
+extern __global__ void optimized_verlet_integration_kernel(
+    float4* __restrict__ positions,
+    float4* __restrict__ velocities,
+    const float4* __restrict__ forces,
+    float dt,
+    int num_particles
+);
+
+extern __global__ void optimized_energy_reduction_kernel(
+    const float4* __restrict__ velocities,
+    const float4* __restrict__ forces,
+    float* __restrict__ total_kinetic,
+    float* __restrict__ total_potential,
+    int num_particles
+);
 
 extern "C" {
 
