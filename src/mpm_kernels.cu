@@ -181,6 +181,147 @@ struct ConstitutiveModels {
         }
     }
 
+    // Drucker-Prager plasticity model (for granular materials like sand)
+    __device__ static void druckerPragerPlasticity(const T F[9], T F_plastic[9], const MaterialParameters& params, T stress[6]) {
+        // Elastic deformation gradient: F_e = F * F_p^(-1)
+        T F_p_inv[9];
+        invertMatrix3x3(F_plastic, F_p_inv);
+
+        T F_elastic[9];
+        multiplyMatrix3x3(F, F_p_inv, F_elastic);
+
+        // Compute elastic stress using Neo-Hookean model
+        neoHookean(F_elastic, params, stress);
+
+        // Drucker-Prager yield criterion: f = ||s|| - α*p - k
+        // where s = deviatoric stress, p = pressure, α = friction coefficient, k = cohesion
+        T pressure = (stress[0] + stress[1] + stress[2]) / 3.0f;
+
+        // Deviatoric stress
+        T s_dev[6];
+        s_dev[0] = stress[0] - pressure;
+        s_dev[1] = stress[1] - pressure;
+        s_dev[2] = stress[2] - pressure;
+        s_dev[3] = stress[3];
+        s_dev[4] = stress[4];
+        s_dev[5] = stress[5];
+
+        T s_norm = sqrtf(s_dev[0]*s_dev[0] + s_dev[1]*s_dev[1] + s_dev[2]*s_dev[2] +
+                        2.0f * (s_dev[3]*s_dev[3] + s_dev[4]*s_dev[4] + s_dev[5]*s_dev[5]));
+
+        // Friction coefficient from friction angle: α = 6*sin(φ)/(3-sin(φ))
+        T friction_angle_rad = params.friction_angle * 3.14159265f / 180.0f;
+        T sin_phi = sinf(friction_angle_rad);
+        T alpha = 6.0f * sin_phi / (3.0f - sin_phi);
+
+        // Cohesion parameter: k = 6*c*cos(φ)/(3-sin(φ))
+        T cos_phi = cosf(friction_angle_rad);
+        T k = 6.0f * params.cohesion * cos_phi / (3.0f - sin_phi);
+
+        // Yield function
+        T yield_function = s_norm - alpha * pressure - k;
+
+        if (yield_function > 0.0f) {
+            // Return mapping: project stress back to yield surface
+            T lambda = yield_function / (2.0f * params.youngs_modulus / (2.0f * (1.0f + params.poisson_ratio)) + alpha * alpha * params.youngs_modulus / (3.0f * (1.0f - 2.0f * params.poisson_ratio)));
+
+            // Update pressure
+            T mu = params.youngs_modulus / (2.0f * (1.0f + params.poisson_ratio));
+            T K = params.youngs_modulus / (3.0f * (1.0f - 2.0f * params.poisson_ratio));
+            pressure += alpha * lambda * K;
+
+            // Update deviatoric stress
+            T scale = (s_norm - lambda * 2.0f * mu) / s_norm;
+            s_dev[0] *= scale;
+            s_dev[1] *= scale;
+            s_dev[2] *= scale;
+            s_dev[3] *= scale;
+            s_dev[4] *= scale;
+            s_dev[5] *= scale;
+
+            // Reconstruct total stress
+            stress[0] = s_dev[0] + pressure;
+            stress[1] = s_dev[1] + pressure;
+            stress[2] = s_dev[2] + pressure;
+            stress[3] = s_dev[3];
+            stress[4] = s_dev[4];
+            stress[5] = s_dev[5];
+
+            // Update plastic deformation gradient
+            updatePlasticDeformationGradient(F_plastic, lambda);
+        }
+    }
+
+    // Snow plasticity model (based on Stomakhin et al. 2013)
+    __device__ static void snowPlasticity(const T F[9], T F_plastic[9], const MaterialParameters& params, T stress[6]) {
+        // Singular value decomposition: F = U * Σ * V^T
+        // For snow, we clamp singular values to prevent excessive compression/stretching
+
+        // Elastic deformation gradient
+        T F_p_inv[9];
+        invertMatrix3x3(F_plastic, F_p_inv);
+
+        T F_elastic[9];
+        multiplyMatrix3x3(F, F_p_inv, F_elastic);
+
+        // Compute SVD (simplified - using polar decomposition)
+        T U[9], V[9], sigma[3];
+        polarDecomposition(F_elastic, U, sigma, V);
+
+        // Critical compression and stretch thresholds
+        T theta_c = params.critical_compression;  // Typical: 2.5e-2
+        T theta_s = params.critical_stretch;      // Typical: 7.5e-3
+
+        // Clamp singular values
+        T sigma_clamped[3];
+        bool plastic_flow = false;
+        for (int i = 0; i < 3; ++i) {
+            if (sigma[i] < 1.0f - theta_c) {
+                // Critical compression
+                sigma_clamped[i] = 1.0f - theta_c;
+                plastic_flow = true;
+            } else if (sigma[i] > 1.0f + theta_s) {
+                // Critical stretch
+                sigma_clamped[i] = 1.0f + theta_s;
+                plastic_flow = true;
+            } else {
+                sigma_clamped[i] = sigma[i];
+            }
+        }
+
+        if (plastic_flow) {
+            // Update plastic deformation gradient
+            T F_e_new[9];
+            reconstructFromSVD(U, sigma_clamped, V, F_e_new);
+
+            // F_p_new = F * F_e_new^(-1)
+            T F_e_new_inv[9];
+            invertMatrix3x3(F_e_new, F_e_new_inv);
+            multiplyMatrix3x3(F, F_e_new_inv, F_plastic);
+
+            // Recompute elastic deformation with clamped values
+            for (int i = 0; i < 9; ++i) {
+                F_elastic[i] = F_e_new[i];
+            }
+        }
+
+        // Compute stress using clamped elastic deformation
+        neoHookean(F_elastic, params, stress);
+
+        // Apply hardening: E(F_p) = E_0 * exp(ξ * (1 - J_p))
+        T J_p = F_plastic[0] * (F_plastic[4] * F_plastic[8] - F_plastic[5] * F_plastic[7]) -
+                F_plastic[1] * (F_plastic[3] * F_plastic[8] - F_plastic[5] * F_plastic[6]) +
+                F_plastic[2] * (F_plastic[3] * F_plastic[7] - F_plastic[4] * F_plastic[6]);
+
+        T xi = params.hardening_coefficient; // Hardening parameter (typical: 10)
+        T hardening = expf(xi * (1.0f - J_p));
+
+        // Scale stress by hardening
+        for (int i = 0; i < 6; ++i) {
+            stress[i] *= hardening;
+        }
+    }
+
     // Helper functions
     __device__ static void invertMatrix3x3(const T A[9], T A_inv[9]) {
         T det = A[0] * (A[4] * A[8] - A[5] * A[7]) -
@@ -232,6 +373,141 @@ struct ConstitutiveModels {
         F_plastic[0] *= factor;
         F_plastic[4] *= factor;
         F_plastic[8] *= factor;
+    }
+
+    // =========================================================================
+    // SVD HELPER FUNCTIONS (for snow plasticity)
+    // =========================================================================
+
+    /**
+     * Polar decomposition via SVD: F = U * Σ * V^T
+     * Uses iterative Jacobi SVD for 3x3 matrices (GPU-efficient)
+     *
+     * @param F Input 3x3 matrix (row-major)
+     * @param U Output left singular vectors (row-major)
+     * @param sigma Output singular values (3 elements)
+     * @param V Output right singular vectors (row-major)
+     */
+    __device__ static void polarDecomposition(const T F[9], T U[9], T sigma[3], T V[9]) {
+        // Compute F^T * F (symmetric positive definite)
+        T FtF[9];
+        FtF[0] = F[0]*F[0] + F[3]*F[3] + F[6]*F[6];
+        FtF[1] = F[0]*F[1] + F[3]*F[4] + F[6]*F[7];
+        FtF[2] = F[0]*F[2] + F[3]*F[5] + F[6]*F[8];
+        FtF[3] = FtF[1];
+        FtF[4] = F[1]*F[1] + F[4]*F[4] + F[7]*F[7];
+        FtF[5] = F[1]*F[2] + F[4]*F[5] + F[7]*F[8];
+        FtF[6] = FtF[2];
+        FtF[7] = FtF[5];
+        FtF[8] = F[2]*F[2] + F[5]*F[5] + F[8]*F[8];
+
+        // Initialize V to identity
+        V[0] = 1; V[1] = 0; V[2] = 0;
+        V[3] = 0; V[4] = 1; V[5] = 0;
+        V[6] = 0; V[7] = 0; V[8] = 1;
+
+        // Jacobi iteration to diagonalize F^T * F
+        const int max_iterations = 20;
+        const T epsilon = 1e-6f;
+
+        for (int iter = 0; iter < max_iterations; iter++) {
+            // Find largest off-diagonal element
+            T max_val = 0;
+            int p = 0, q = 1;
+
+            if (fabs(FtF[1]) > max_val) { max_val = fabs(FtF[1]); p = 0; q = 1; }
+            if (fabs(FtF[2]) > max_val) { max_val = fabs(FtF[2]); p = 0; q = 2; }
+            if (fabs(FtF[5]) > max_val) { max_val = fabs(FtF[5]); p = 1; q = 2; }
+
+            if (max_val < epsilon) break;
+
+            // Compute Jacobi rotation
+            T diff = FtF[q*3 + q] - FtF[p*3 + p];
+            T t;
+            if (fabs(FtF[p*3 + q]) < epsilon) {
+                t = 0;
+            } else {
+                T phi = diff / (2.0f * FtF[p*3 + q]);
+                t = 1.0f / (fabs(phi) + sqrt(phi*phi + 1.0f));
+                if (phi < 0) t = -t;
+            }
+
+            T c = 1.0f / sqrt(t*t + 1.0f);
+            T s = t * c;
+
+            // Apply rotation to FtF
+            T FtF_pp = FtF[p*3 + p];
+            T FtF_qq = FtF[q*3 + q];
+            T FtF_pq = FtF[p*3 + q];
+
+            FtF[p*3 + p] = c*c*FtF_pp - 2*s*c*FtF_pq + s*s*FtF_qq;
+            FtF[q*3 + q] = s*s*FtF_pp + 2*s*c*FtF_pq + c*c*FtF_qq;
+            FtF[p*3 + q] = FtF[q*3 + p] = 0;
+
+            // Update other elements
+            for (int i = 0; i < 3; i++) {
+                if (i != p && i != q) {
+                    T FtF_ip = FtF[i*3 + p];
+                    T FtF_iq = FtF[i*3 + q];
+                    FtF[i*3 + p] = FtF[p*3 + i] = c*FtF_ip - s*FtF_iq;
+                    FtF[i*3 + q] = FtF[q*3 + i] = s*FtF_ip + c*FtF_iq;
+                }
+            }
+
+            // Update V (accumulate rotations)
+            for (int i = 0; i < 3; i++) {
+                T V_ip = V[i*3 + p];
+                T V_iq = V[i*3 + q];
+                V[i*3 + p] = c*V_ip - s*V_iq;
+                V[i*3 + q] = s*V_ip + c*V_iq;
+            }
+        }
+
+        // Extract singular values (sqrt of eigenvalues of F^T * F)
+        sigma[0] = sqrt(fmax(0.0f, FtF[0]));
+        sigma[1] = sqrt(fmax(0.0f, FtF[4]));
+        sigma[2] = sqrt(fmax(0.0f, FtF[8]));
+
+        // Compute U = F * V * Σ^(-1)
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                T sum = 0;
+                for (int k = 0; k < 3; k++) {
+                    sum += F[i*3 + k] * V[k*3 + j];
+                }
+                T sigma_inv = (sigma[j] > 1e-8f) ? (1.0f / sigma[j]) : 0.0f;
+                U[i*3 + j] = sum * sigma_inv;
+            }
+        }
+    }
+
+    /**
+     * Reconstruct matrix from SVD components: F = U * Σ * V^T
+     *
+     * @param U Left singular vectors (row-major 3x3)
+     * @param sigma Singular values (3 elements)
+     * @param V Right singular vectors (row-major 3x3)
+     * @param F Output reconstructed matrix (row-major 3x3)
+     */
+    __device__ static void reconstructFromSVD(const T U[9], const T sigma[3], const T V[9], T F[9]) {
+        // F = U * Σ * V^T
+        // First compute Σ * V^T
+        T sigma_Vt[9];
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                sigma_Vt[i*3 + j] = (i == 0 ? sigma[0] : (i == 1 ? sigma[1] : sigma[2])) * V[j*3 + i];
+            }
+        }
+
+        // Then compute F = U * (Σ * V^T)
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                F[i*3 + j] = 0;
+                for (int k = 0; k < 3; k++) {
+                    F[i*3 + j] += U[i*3 + k] * sigma_Vt[k*3 + j];
+                }
+            }
+        }
     }
 };
 
