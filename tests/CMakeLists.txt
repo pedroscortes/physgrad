@@ -29,6 +29,7 @@ set(TEST_SOURCES
     test_adjoint_standalone.cpp
     test_differentiable_contact.cpp
     test_gradient_verification.cpp
+    test_symplectic_energy_conservation.cpp
 )
 
 if(WITH_PYTORCH AND TORCH_FOUND)
