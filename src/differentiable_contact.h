@@ -208,8 +208,8 @@ public:
         int max_iterations = 20;
         T tolerance = T{1e-6};
         T restitution = T{0.2};        // Coefficient of restitution
-        T contact_stiffness = T{1e6};  // Contact penalty stiffness
-        T contact_damping = T{1e3};    // Contact damping
+        T contact_stiffness = T{0.2};  // Baumgarte bias factor β (typically 0.1-0.3)
+        T contact_damping = T{0.0};    // Contact damping (deprecated, not used)
         bool use_friction = true;
         bool warm_start = true;
     };
@@ -259,7 +259,7 @@ public:
 
                 // Compute constraint violation
                 T constraint_violation = computeNormalConstraintViolation(
-                    c, contacts, velocities, solution);
+                    c, contacts, velocities, solution, dt);
 
                 // Compute diagonal mass matrix element
                 T diagonal_mass = computeDiagonalMass(c, contacts, masses);
@@ -384,7 +384,8 @@ private:
         size_t contact_idx,
         const std::vector<ContactPoint<T>>& contacts,
         const std::vector<ConceptVector3D<T>>& velocities,
-        const ContactSolution<T>& solution) {
+        const ContactSolution<T>& solution,
+        T dt) {
 
         const auto& contact = contacts[contact_idx];
 
@@ -403,11 +404,12 @@ private:
                 velocities[contact.body_a_id][2] * contact.normal[2];
         }
 
-        // Add constraint correction terms
-        T penetration_correction = params_.contact_stiffness * contact.penetration_depth;
-        T damping_term = params_.contact_damping * rel_normal_vel;
+        // Baumgarte stabilization: C = v_rel · n - (β/h) * penetration_depth
+        // penetration_depth > 0 when penetrating, so we subtract it (gap function)
+        // contact_stiffness is the bias factor β (typically 0.1-0.3)
+        T baumgarte_bias = (params_.contact_stiffness / dt) * contact.penetration_depth;
 
-        return rel_normal_vel + penetration_correction + damping_term;
+        return rel_normal_vel - baumgarte_bias;
     }
 
     /**

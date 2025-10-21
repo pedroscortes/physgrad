@@ -23,7 +23,7 @@ protected:
         typename DifferentiableContactSolver<float>::SolverParams params;
         params.max_iterations = 50;
         params.tolerance = 1e-6f;
-        params.contact_stiffness = 1e5f;
+        params.contact_stiffness = 0.2f;  // Baumgarte bias factor (0.1-0.3)
         params.use_friction = true;
 
         solver_ = std::make_unique<DifferentiableContactSolver<float>>(params);
