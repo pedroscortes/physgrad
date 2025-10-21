@@ -1,0 +1,23 @@
+# Standalone gradient verification test
+cmake_minimum_required(VERSION 3.18)
+
+# Find GTest
+find_package(GTest REQUIRED)
+
+# Include directories
+include_directories(${CMAKE_SOURCE_DIR}/src)
+
+# Create standalone test executable
+add_executable(test_gradient_verification_standalone
+    test_gradient_verification.cpp
+)
+
+# Link with GTest
+target_link_libraries(test_gradient_verification_standalone
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+
+# Add test
+add_test(NAME GradientVerification COMMAND test_gradient_verification_standalone)

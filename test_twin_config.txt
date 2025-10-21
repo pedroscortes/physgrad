@@ -1,0 +1,6 @@
+# Digital Twin Configuration: test_twin
+calibrated: true
+sensors: 2
+parameters: 2
+mass 1 0 true
+damping 0.101141 0.000570593 true

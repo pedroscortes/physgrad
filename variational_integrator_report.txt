@@ -1,0 +1,27 @@
+PhysGrad Variational Integrator Conservation Analysis
+===================================================
+
+Timestep: 0.1
+  Steps: 62
+  Energy drift: 0
+  Momentum drift: 0
+  Final position: 1
+
+Timestep: 0.05
+  Steps: 125
+  Energy drift: 0
+  Momentum drift: 0
+  Final position: 1
+
+Timestep: 0.01
+  Steps: 628
+  Energy drift: 0
+  Momentum drift: 0
+  Final position: 1
+
+Timestep: 0.005
+  Steps: 1256
+  Energy drift: 0
+  Momentum drift: 0
+  Final position: 1
+
