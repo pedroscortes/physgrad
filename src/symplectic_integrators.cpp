@@ -202,42 +202,46 @@ float ForestRuth::integrateStep(
 
     std::vector<float> force_x(pos_x.size()), force_y(pos_x.size()), force_z(pos_x.size());
 
-    // Use Ruth's 4th order symplectic integrator (correct implementation)
-    // This is based on McLachlan & Atela (1992) Acta Numerica
-    // Position steps: c1, c2, c3, c4 with c1+c2+c3+c4 = 1
-    // Velocity steps: d1, d2, d3 with d1+d2+d3 = 1
+    // Forest-Ruth 4th-order symplectic integrator (Ruth 1983)
+    // Composition of 3 leapfrog steps: ψ_2(c1*dt) ∘ ψ_2(c2*dt) ∘ ψ_2(c1*dt)
+    // where c1 = theta, c2 = chi, and c1 + c2 + c1 = 1
+    // Expands to XVXVXVX pattern: 4 position, 3 velocity updates
+    //
+    // Position coefficients: theta/2, (theta+chi)/2, (theta+chi)/2, theta/2
+    // Velocity coefficients: theta, chi, theta
+    // Verification: pos sum = 2*theta + chi = 1 ✓, vel sum = 2*theta + chi = 1 ✓
 
     const float c1 = theta / 2.0f;
-    const float c2 = (chi + theta) / 2.0f;
-    const float c3 = (1.0f - chi - theta) / 2.0f;
-    const float c4 = theta / 2.0f;
+    const float c2 = (theta + chi) / 2.0f;
+    const float c3 = c2;  // Symmetric
+    const float c4 = c1;  // Symmetric
 
     const float d1 = theta;
     const float d2 = chi;
-    const float d3 = 1.0f - theta - chi;  // This ensures d1+d2+d3 = 1
+    const float d3 = theta;
 
-    // Step 1: x += c1*dt * v
+    // Step 1: x += (theta/2)*dt * v
     positionDrift(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, c1 * dt);
 
-    // Step 2: v += d1*dt * F(x)/m
+    // Step 2: v += theta*dt * F(x)/m
     force_function(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, force_x, force_y, force_z, masses, time);
     velocityKick(vel_x, vel_y, vel_z, force_x, force_y, force_z, masses, d1 * dt);
 
-    // Step 3: x += c2*dt * v
+    // Step 3: x += ((theta+chi)/2)*dt * v
     positionDrift(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, c2 * dt);
 
-    // Step 4: v += d2*dt * F(x)/m
+    // Step 4: v += chi*dt * F(x)/m
     force_function(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, force_x, force_y, force_z, masses, time);
     velocityKick(vel_x, vel_y, vel_z, force_x, force_y, force_z, masses, d2 * dt);
 
-    // Step 5: x += c3*dt * v
+    // Step 5: x += ((theta+chi)/2)*dt * v
     positionDrift(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, c3 * dt);
 
-    // Step 6: v += d3*dt * F(x)/m
+    // Step 6: v += theta*dt * F(x)/m
     force_function(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, force_x, force_y, force_z, masses, time);
     velocityKick(vel_x, vel_y, vel_z, force_x, force_y, force_z, masses, d3 * dt);
 
-    // Step 7: x += c4*dt * v
+    // Step 7: x += (theta/2)*dt * v
     positionDrift(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, c4 * dt);
 
     updateStatistics(dt);
