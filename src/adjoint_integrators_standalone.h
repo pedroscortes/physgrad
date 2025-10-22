@@ -521,18 +521,46 @@ public:
         auto velocities = initial_velocities;
         runForward(positions, velocities, masses, dt, num_steps);
 
-        // Compute loss and its gradients
+        // Compute loss at final state
         T loss = loss_function(positions, velocities);
 
-        // Create unit gradients for simple scalar loss
+        // Compute loss gradients via finite differences
         std::vector<vector_type> loss_grad_pos(positions.size());
         std::vector<vector_type> loss_grad_vel(velocities.size());
 
-        // Simple finite difference approximation for gradients
+        const T eps = T(1e-5);  // Increased for float32 precision
+
+        // Gradient w.r.t. positions
         for (size_t i = 0; i < positions.size(); ++i) {
             for (size_t j = 0; j < 3; ++j) {
-                loss_grad_pos[i][j] = T(1) / static_cast<T>(positions.size() * 3);
-                loss_grad_vel[i][j] = T(1) / static_cast<T>(velocities.size() * 3);
+                T original = positions[i][j];
+
+                positions[i][j] = original + eps;
+                T loss_plus = loss_function(positions, velocities);
+
+                positions[i][j] = original - eps;
+                T loss_minus = loss_function(positions, velocities);
+
+                positions[i][j] = original;
+
+                loss_grad_pos[i][j] = (loss_plus - loss_minus) / (T(2) * eps);
+            }
+        }
+
+        // Gradient w.r.t. velocities
+        for (size_t i = 0; i < velocities.size(); ++i) {
+            for (size_t j = 0; j < 3; ++j) {
+                T original = velocities[i][j];
+
+                velocities[i][j] = original + eps;
+                T loss_plus = loss_function(positions, velocities);
+
+                velocities[i][j] = original - eps;
+                T loss_minus = loss_function(positions, velocities);
+
+                velocities[i][j] = original;
+
+                loss_grad_vel[i][j] = (loss_plus - loss_minus) / (T(2) * eps);
             }
         }
 

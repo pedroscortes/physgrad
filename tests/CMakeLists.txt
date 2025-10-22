@@ -34,6 +34,7 @@ set(TEST_SOURCES
     test_gradient_flow_validation.cpp
     test_frost_integrator.cpp
     test_frost_debug.cpp
+    test_adjoint_debug.cpp
 )
 
 if(WITH_PYTORCH AND TORCH_FOUND)
