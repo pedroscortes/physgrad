@@ -59,8 +59,8 @@ struct StackingTaskConfig {
     float stability_threshold = 0.01f;  // meters
 
     // Loss function weights
-    float height_weight = 2.0f;
-    float stability_weight = 1.0f;
+    float height_weight = 5.0f;        // Increased to strongly favor height
+    float stability_weight = 0.1f;      // Reduced to not penalize unstable stacks too much
     float alignment_weight = 0.5f;
     float collision_penalty_weight = 10.0f;
 
@@ -81,7 +81,7 @@ public:
         typename DifferentiableContactSolver<float>::SolverParams solver_params;
         solver_params.max_iterations = 100;  // Increased for better convergence
         solver_params.tolerance = 1e-4f;     // Relaxed from 1e-6
-        solver_params.contact_stiffness = 0.001f;  // Very low for gentle multi-body contacts
+        solver_params.contact_stiffness = 0.5f;  // Very high stiffness needed to support stacked blocks against gravity
         solver_params.relaxation = 0.8f;
         solver_params.use_friction = true;
 
@@ -301,9 +301,10 @@ public:
             placement_order_.push_back(i);
         }
 
-        // Initialize placement positions (stack vertically at base)
+        // Initialize placement positions (stack vertically at base with significant overlap)
         for (int i = 0; i < config_.num_blocks; ++i) {
-            float height = config_.block_size / 2.0f + i * config_.block_size;
+            // Use 0.75 spacing to create very strong overlap for stable stacking
+            float height = config_.block_size / 2.0f + i * config_.block_size * 0.75f;
             placement_positions_.push_back(ConceptVector3D<float>{
                 config_.tower_base[0],
                 height,
@@ -347,7 +348,7 @@ public:
             }
 
             // Clip gradients to prevent explosion
-            const float max_gradient = 5.0f;
+            const float max_gradient = 1.0f;  // Reduced from 5.0 for stability
             for (int b = 0; b < config_.num_blocks; ++b) {
                 for (int dim = 0; dim < 3; ++dim) {
                     if (gradients[b][dim] > max_gradient) gradients[b][dim] = max_gradient;
@@ -437,8 +438,8 @@ int main(int argc, char** argv) {
     // Configure task
     StackingTaskConfig config;
     config.num_blocks = 3;
-    config.num_optimization_iters = 30;
-    config.learning_rate = 0.001f;  // Reduced from 0.003 for stability
+    config.num_optimization_iters = 50;
+    config.learning_rate = 0.0005f;  // Very small for stable multi-body optimization
     config.print_every = 5;
 
     // Run optimization

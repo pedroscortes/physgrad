@@ -41,14 +41,14 @@ struct GraspingTaskConfig {
 
     // Physics parameters
     float dt = 0.01f;
-    int num_timesteps = 20;
+    int num_timesteps = 10;  // Reduced from 20 to limit fall distance if contact lost
     float friction_coeff = 0.6f;
     float gravity = 9.8f;
 
     // Grasp quality weights
     float force_closure_weight = 1.0f;
     float contact_normal_weight = 0.5f;
-    float penetration_penalty_weight = 10.0f;
+    float penetration_penalty_weight = 5.0f;  // Balanced to prevent both explosion and instability
 
     // Optimization parameters
     int num_optimization_iters = 100;
@@ -392,7 +392,7 @@ public:
             }
 
             // Clip gradients to prevent explosion
-            const float max_gradient = 10.0f;
+            const float max_gradient = 1.0f;  // Reduced from 10.0 for more stability
             for (int f = 0; f < config_.num_fingers; ++f) {
                 for (int dim = 0; dim < 3; ++dim) {
                     if (gradients[f][dim] > max_gradient) gradients[f][dim] = max_gradient;
@@ -467,8 +467,8 @@ int main(int argc, char** argv) {
     // Configure task
     GraspingTaskConfig config;
     config.num_fingers = 3;
-    config.num_optimization_iters = 80;
-    config.learning_rate = 0.001f;  // Reduced from 0.005 for stability
+    config.num_optimization_iters = 100;
+    config.learning_rate = 0.0005f;  // Very small for stability with contact dynamics
     config.print_every = 10;
 
     // Run optimization

@@ -40,7 +40,7 @@ struct PushingTaskConfig {
     ConceptVector3D<float> box_goal_pos{0.5f, 0.1f, 0.0f};
 
     // Pusher properties
-    float pusher_mass = 1.5f;  // Increased from 0.5 for better momentum transfer
+    float pusher_mass = 1000.0f;  // Very large (kinematic/infinite mass approximation)
     float pusher_radius = 0.05f;
 
     // Physics parameters
@@ -49,12 +49,12 @@ struct PushingTaskConfig {
     float friction_coeff = 0.8f;  // Increased from 0.5 for better grip
 
     // Optimization parameters
-    int num_optimization_iters = 100;
-    float learning_rate = 0.01f;
+    int num_optimization_iters = 50;
+    float learning_rate = 0.0005f;  // Very small for stable convergence
 
     // Visualization
     bool visualize = true;
-    int print_every = 10;
+    int print_every = 5;
 };
 
 // =============================================================================
@@ -68,7 +68,7 @@ public:
         typename DifferentiableContactSolver<float>::SolverParams solver_params;
         solver_params.max_iterations = 100;  // Increased for better convergence
         solver_params.tolerance = 1e-4f;     // Relaxed from 1e-6
-        solver_params.contact_stiffness = 0.01f;  // Reduced dramatically for reasonable forces
+        solver_params.contact_stiffness = 0.001f;  // Very low for gentle pushing
         solver_params.relaxation = 0.8f;
         solver_params.use_friction = true;
 
@@ -106,10 +106,8 @@ public:
 
         // Simulate each timestep
         for (int t = 0; t < config_.num_timesteps; ++t) {
-            // Update pusher position to follow trajectory
-            if (t < static_cast<int>(pusher_trajectory.size())) {
-                positions[1] = pusher_trajectory[t];
-            }
+            // Apply gravity BEFORE contact resolution
+            velocities[0][1] -= 9.8f * config_.dt;  // Box only
 
             // Detect contacts
             auto contacts = contact_detector_->detectContacts(positions);
@@ -173,18 +171,30 @@ public:
                 }
             }
 
-            // Apply gravity BEFORE integration (correct order)
-            velocities[0][1] -= 9.8f * config_.dt;  // Box only
+            // Apply velocity damping to prevent explosions
+            const float damping = 0.98f;
+            velocities[0] = velocities[0] * damping;
 
-            // Integrate positions (simple Euler)
-            for (size_t i = 0; i < positions.size(); ++i) {
-                positions[i] = positions[i] + velocities[i] * config_.dt;
+            // Velocity clamping as safety net
+            const float max_vel = 5.0f;
+            for (int d = 0; d < 3; ++d) {
+                velocities[0][d] = std::max(-max_vel, std::min(max_vel, velocities[0][d]));
             }
+
+            // Integrate box position using its velocity (simple Euler)
+            positions[0] = positions[0] + velocities[0] * config_.dt;
 
             // Ground collision (simple)
             if (positions[0][1] < config_.box_size / 2.0f) {
                 positions[0][1] = config_.box_size / 2.0f;
                 velocities[0][1] = std::max(0.0f, velocities[0][1]);
+            }
+
+            // Update pusher position to follow trajectory (kinematic control)
+            if (t < static_cast<int>(pusher_trajectory.size()) - 1) {
+                // Compute pusher velocity from trajectory for NEXT timestep
+                velocities[1] = (pusher_trajectory[t+1] - pusher_trajectory[t]) * (1.0f / config_.dt);
+                positions[1] = pusher_trajectory[t+1];
             }
 
             if (box_trajectory) {
@@ -218,14 +228,15 @@ public:
     PushingOptimizer(const PushingTaskConfig& config)
         : config_(config), simulation_(config) {
 
-        // Initialize pusher trajectory (straight line from left to right)
+        // Initialize pusher trajectory (very conservative - undershoot initially)
         trajectory_.resize(config_.num_timesteps);
         for (int t = 0; t < config_.num_timesteps; ++t) {
             float progress = static_cast<float>(t) / config_.num_timesteps;
+            // Start far back, barely reach box to avoid overshooting
             trajectory_[t] = ConceptVector3D<float>{
-                -0.2f + progress * 0.8f,  // Move from left to right
-                0.1f,                      // Fixed height
-                0.0f                       // No z-motion
+                -0.4f + progress * 0.45f,  // Move from -0.4 to 0.05 (very gentle)
+                0.1f,                       // Fixed height
+                0.0f                        // No z-motion
             };
         }
     }
@@ -330,9 +341,9 @@ int main(int argc, char** argv) {
 
     // Configure task
     PushingTaskConfig config;
-    config.num_optimization_iters = 50;
-    config.learning_rate = 0.005f;
-    config.print_every = 5;
+    config.num_optimization_iters = 100;
+    config.learning_rate = 0.001f;
+    config.print_every = 10;
 
     // Run optimization
     PushingOptimizer optimizer(config);
