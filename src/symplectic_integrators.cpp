@@ -460,24 +460,28 @@ float FrostForwardSymplectic4::integrateStep(
             float grad_corr_x = 0.0f, grad_corr_y = 0.0f, grad_corr_z = 0.0f;
 
             // Compute gradient corrections for each particle
+            // Jerk = (1/m) * (∂F/∂x) * v   (using chain rule: da/dt = ∂a/∂x * v)
             for (size_t j = 0; j < pos_x.size(); ++j) {
-                float dx = vel_x[i] * dt;
-                float dy = vel_y[i] * dt;
-                float dz = vel_z[i] * dt;
+                // BUG FIX: Use velocity directly, not vel*dt (was causing dt^4 term instead of dt^3)
+                float vx = vel_x[i];
+                float vy = vel_y[i];
+                float vz = vel_z[i];
 
-                // Higher-order terms: ∇F·v*dt
-                grad_corr_x += force_grad_xx[i][j] * dx + force_grad_xy[i][j] * dy + force_grad_xz[i][j] * dz;
-                grad_corr_y += force_grad_yx[i][j] * dx + force_grad_yy[i][j] * dy + force_grad_yz[i][j] * dz;
-                grad_corr_z += force_grad_zx[i][j] * dx + force_grad_zy[i][j] * dy + force_grad_zz[i][j] * dz;
+                // Higher-order terms: ∇F·v (jerk contribution)
+                grad_corr_x += force_grad_xx[i][j] * vx + force_grad_xy[i][j] * vy + force_grad_xz[i][j] * vz;
+                grad_corr_y += force_grad_yx[i][j] * vx + force_grad_yy[i][j] * vy + force_grad_yz[i][j] * vz;
+                grad_corr_z += force_grad_zx[i][j] * vx + force_grad_zy[i][j] * vy + force_grad_zz[i][j] * vz;
             }
 
             // FROST position update with gradient corrections
+            // x(t+dt) = x(t) + v*dt + (1/2)*a*dt^2 + (1/6)*jerk*dt^3
+            // BUG FIX: Changed coefficient from 1/12 to 1/6 for proper Taylor expansion
             pos_x[i] += vel_x[i] * dt + 0.5f * temp_force_x[i] * inv_mass * dt * dt +
-                       (dt * dt * dt / 12.0f) * grad_corr_x * inv_mass;
+                       (dt * dt * dt / 6.0f) * grad_corr_x * inv_mass;
             pos_y[i] += vel_y[i] * dt + 0.5f * temp_force_y[i] * inv_mass * dt * dt +
-                       (dt * dt * dt / 12.0f) * grad_corr_y * inv_mass;
+                       (dt * dt * dt / 6.0f) * grad_corr_y * inv_mass;
             pos_z[i] += vel_z[i] * dt + 0.5f * temp_force_z[i] * inv_mass * dt * dt +
-                       (dt * dt * dt / 12.0f) * grad_corr_z * inv_mass;
+                       (dt * dt * dt / 6.0f) * grad_corr_z * inv_mass;
         }
 
         // Compute forces at new position
@@ -489,24 +493,30 @@ float FrostForwardSymplectic4::integrateStep(
         for (size_t i = 0; i < vel_x.size(); ++i) {
             float inv_mass = 1.0f / masses[i];
 
-            // Apply gradient corrections to velocity
-            float grad_vel_corr_x = 0.0f, grad_vel_corr_y = 0.0f, grad_vel_corr_z = 0.0f;
+            // Compute jerk for velocity correction
+            // v(t+dt) = v(t) + a_avg*dt + (1/12)*jerk*dt^2
+            float jerk_x = 0.0f, jerk_y = 0.0f, jerk_z = 0.0f;
 
             for (size_t j = 0; j < pos_x.size(); ++j) {
-                float force_change_x = new_force_x[i] - temp_force_x[i];
-                float force_change_y = new_force_y[i] - temp_force_y[i];
-                float force_change_z = new_force_z[i] - temp_force_z[i];
+                // Average velocity over the timestep for jerk calculation
+                float avg_vx = 0.5f * (temp_vel_x[i] + vel_x[i]);
+                float avg_vy = 0.5f * (temp_vel_y[i] + vel_y[i]);
+                float avg_vz = 0.5f * (temp_vel_z[i] + vel_z[i]);
 
-                // Gradient correction for velocity
-                grad_vel_corr_x += force_grad_xx[i][j] * force_change_x * dt / 12.0f;
-                grad_vel_corr_y += force_grad_yy[i][j] * force_change_y * dt / 12.0f;
-                grad_vel_corr_z += force_grad_zz[i][j] * force_change_z * dt / 12.0f;
+                // Jerk contribution: (∂F/∂x) * v
+                jerk_x += force_grad_xx[i][j] * avg_vx + force_grad_xy[i][j] * avg_vy + force_grad_xz[i][j] * avg_vz;
+                jerk_y += force_grad_yx[i][j] * avg_vx + force_grad_yy[i][j] * avg_vy + force_grad_yz[i][j] * avg_vz;
+                jerk_z += force_grad_zx[i][j] * avg_vx + force_grad_zy[i][j] * avg_vy + force_grad_zz[i][j] * avg_vz;
             }
 
             // FROST velocity update with gradient corrections
-            vel_x[i] += 0.5f * (temp_force_x[i] + new_force_x[i]) * inv_mass * dt + grad_vel_corr_x * inv_mass;
-            vel_y[i] += 0.5f * (temp_force_y[i] + new_force_y[i]) * inv_mass * dt + grad_vel_corr_y * inv_mass;
-            vel_z[i] += 0.5f * (temp_force_z[i] + new_force_z[i]) * inv_mass * dt + grad_vel_corr_z * inv_mass;
+            // v(t+dt) = v(t) + (1/2)*(a(t) + a(t+dt))*dt + (1/12)*jerk*dt^2
+            vel_x[i] += 0.5f * (temp_force_x[i] + new_force_x[i]) * inv_mass * dt +
+                       (dt * dt / 12.0f) * jerk_x * inv_mass;
+            vel_y[i] += 0.5f * (temp_force_y[i] + new_force_y[i]) * inv_mass * dt +
+                       (dt * dt / 12.0f) * jerk_y * inv_mass;
+            vel_z[i] += 0.5f * (temp_force_z[i] + new_force_z[i]) * inv_mass * dt +
+                       (dt * dt / 12.0f) * jerk_z * inv_mass;
         }
 
     } else {

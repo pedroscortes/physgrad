@@ -153,10 +153,32 @@ TEST_F(HarmonicOscillatorTest, FROST_LongTermConservation) {
     SymplecticParams params;
     params.time_step = 0.01f;
 
+    // Use lambdas like in the comparison test
+    auto force_func = [this](const std::vector<float>& px, const std::vector<float>&, const std::vector<float>&,
+                             const std::vector<float>&, const std::vector<float>&, const std::vector<float>&,
+                             std::vector<float>& fx, std::vector<float>& fy, std::vector<float>& fz,
+                             const std::vector<float>&, float) {
+        fx[0] = -k * px[0];
+        fy[0] = 0.0f;
+        fz[0] = 0.0f;
+    };
+
+    auto potential_func = [this](const std::vector<float>& px, const std::vector<float>&,
+                                 const std::vector<float>&, const std::vector<float>&) {
+        return 0.5f * k * px[0] * px[0];
+    };
+
+    auto gradient_func = [this](const std::vector<float>&, const std::vector<float>&, const std::vector<float>&,
+                                const std::vector<float>&,
+                                std::vector<std::vector<float>>& grad_xx, std::vector<std::vector<float>>&,
+                                std::vector<std::vector<float>>&) {
+        grad_xx.resize(1, std::vector<float>(1, -k));
+    };
+
     FrostForwardSymplectic4 integrator(params);
-    integrator.setForceFunction(harmonicForce);
-    integrator.setPotentialFunction(harmonicPotential);
-    integrator.setForceGradientFunction(harmonicForceGradient);
+    integrator.setForceFunction(force_func);
+    integrator.setPotentialFunction(potential_func);
+    integrator.setForceGradientFunction(gradient_func);
 
     // Integrate for 100 periods (2π * 100)
     float total_time = 100.0f * 2.0f * M_PI;
@@ -166,7 +188,7 @@ TEST_F(HarmonicOscillatorTest, FROST_LongTermConservation) {
     float time = 0.0f;
 
     for (int step = 0; step < num_steps; ++step) {
-        float energy = computeEnergy(pos_x, vel_x);
+        float energy = 0.5f * m * vel_x[0] * vel_x[0] + 0.5f * k * pos_x[0] * pos_x[0];
         energy_history.push_back(energy);
 
         integrator.integrateStep(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, masses, params.time_step, time);
