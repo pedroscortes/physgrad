@@ -32,6 +32,7 @@ set(TEST_SOURCES
     test_symplectic_energy_conservation.cpp
     test_mpm_materials.cpp
     test_gradient_flow_validation.cpp
+    test_frost_integrator.cpp
 )
 
 if(WITH_PYTORCH AND TORCH_FOUND)
