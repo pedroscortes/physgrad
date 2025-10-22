@@ -40,13 +40,13 @@ struct PushingTaskConfig {
     ConceptVector3D<float> box_goal_pos{0.5f, 0.1f, 0.0f};
 
     // Pusher properties
-    float pusher_mass = 0.5f;
+    float pusher_mass = 1.5f;  // Increased from 0.5 for better momentum transfer
     float pusher_radius = 0.05f;
 
     // Physics parameters
     float dt = 0.01f;
     int num_timesteps = 50;
-    float friction_coeff = 0.5f;
+    float friction_coeff = 0.8f;  // Increased from 0.5 for better grip
 
     // Optimization parameters
     int num_optimization_iters = 100;
@@ -66,9 +66,9 @@ public:
     PushingSimulation(const PushingTaskConfig& config) : config_(config) {
         // Initialize contact solver
         typename DifferentiableContactSolver<float>::SolverParams solver_params;
-        solver_params.max_iterations = 50;
-        solver_params.tolerance = 1e-6f;
-        solver_params.contact_stiffness = 0.2f;
+        solver_params.max_iterations = 100;  // Increased for better convergence
+        solver_params.tolerance = 1e-4f;     // Relaxed from 1e-6
+        solver_params.contact_stiffness = 0.01f;  // Reduced dramatically for reasonable forces
         solver_params.relaxation = 0.8f;
         solver_params.use_friction = true;
 
@@ -123,8 +123,8 @@ public:
             auto solution = contact_solver_->solveContacts(
                 contacts, velocities, masses, config_.dt);
 
-            // Apply contact impulses to velocities
-            if (!contacts.empty() && solution.converged) {
+            // Apply contact impulses to velocities (even if not fully converged)
+            if (!contacts.empty() && !solution.normal_impulses.empty()) {
                 for (size_t c = 0; c < contacts.size(); ++c) {
                     int body_a = contacts[c].body_a_id;
                     int body_b = contacts[c].body_b_id;
@@ -138,18 +138,48 @@ public:
                             contacts[c].normal * (impulse_n / masses[body_b]);
                     }
 
-                    // Friction impulses (simplified - only affecting box)
-                    // In full implementation, would compute tangent basis and apply properly
+                    // Friction impulses - apply tangential impulses from solver
+                    if (solution.friction_impulses_u.size() > c && solution.friction_impulses_v.size() > c) {
+                        // Get tangent directions from contact
+                        ConceptVector3D<float> tangent1{1.0f, 0.0f, 0.0f};
+                        ConceptVector3D<float> tangent2{0.0f, 0.0f, 1.0f};
+
+                        // Make tangents orthogonal to normal
+                        auto n = contacts[c].normal;
+                        tangent1 = tangent1 - n * (tangent1[0]*n[0] + tangent1[1]*n[1] + tangent1[2]*n[2]);
+                        float len1 = std::sqrt(tangent1[0]*tangent1[0] + tangent1[1]*tangent1[1] + tangent1[2]*tangent1[2]);
+                        if (len1 > 1e-6f) {
+                            tangent1 = tangent1 * (1.0f / len1);
+
+                            // Tangent 2 orthogonal to both normal and tangent1
+                            tangent2 = ConceptVector3D<float>{
+                                n[1]*tangent1[2] - n[2]*tangent1[1],
+                                n[2]*tangent1[0] - n[0]*tangent1[2],
+                                n[0]*tangent1[1] - n[1]*tangent1[0]
+                            };
+
+                            // Apply friction impulses in both tangent directions
+                            float impulse_u = solution.friction_impulses_u[c];
+                            float impulse_v = solution.friction_impulses_v[c];
+
+                            velocities[body_a] = velocities[body_a] - tangent1 * (impulse_u / masses[body_a])
+                                                                     - tangent2 * (impulse_v / masses[body_a]);
+                            if (body_b != SIZE_MAX) {
+                                velocities[body_b] = velocities[body_b] + tangent1 * (impulse_u / masses[body_b])
+                                                                         + tangent2 * (impulse_v / masses[body_b]);
+                            }
+                        }
+                    }
                 }
             }
 
-            // Integrate positions (simple Euler for now)
+            // Apply gravity BEFORE integration (correct order)
+            velocities[0][1] -= 9.8f * config_.dt;  // Box only
+
+            // Integrate positions (simple Euler)
             for (size_t i = 0; i < positions.size(); ++i) {
                 positions[i] = positions[i] + velocities[i] * config_.dt;
             }
-
-            // Apply gravity
-            velocities[0][1] -= 9.8f * config_.dt;  // Box only
 
             // Ground collision (simple)
             if (positions[0][1] < config_.box_size / 2.0f) {

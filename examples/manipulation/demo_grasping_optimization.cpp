@@ -173,9 +173,9 @@ public:
     GraspingSimulation(const GraspingTaskConfig& config) : config_(config) {
         // Initialize contact solver
         typename DifferentiableContactSolver<float>::SolverParams solver_params;
-        solver_params.max_iterations = 50;
-        solver_params.tolerance = 1e-6f;
-        solver_params.contact_stiffness = 0.3f;
+        solver_params.max_iterations = 100;  // Increased for better convergence
+        solver_params.tolerance = 1e-4f;     // Relaxed from 1e-6
+        solver_params.contact_stiffness = 0.001f;  // Very low for gentle contact forces
         solver_params.relaxation = 0.8f;
         solver_params.use_friction = true;
 
@@ -242,8 +242,8 @@ public:
             auto solution = contact_solver_->solveContacts(
                 contacts, velocities, masses, config_.dt);
 
-            // Apply impulses
-            if (solution.converged && !contacts.empty()) {
+            // Apply impulses (even if not fully converged)
+            if (!contacts.empty() && !solution.normal_impulses.empty()) {
                 for (size_t c = 0; c < contacts.size(); ++c) {
                     int body_a = contacts[c].body_a_id;
                     int body_b = contacts[c].body_b_id;
@@ -342,7 +342,8 @@ public:
         finger_positions_.resize(config_.num_fingers);
         for (int i = 0; i < config_.num_fingers; ++i) {
             float angle = 2.0f * M_PI * i / config_.num_fingers;
-            float radius = config_.object_radius * 1.5f;  // Start slightly away
+            // Start in contact: radius < object_radius + finger_radius
+            float radius = config_.object_radius + config_.finger_radius * 0.8f;
             finger_positions_[i] = ConceptVector3D<float>{
                 config_.object_pos[0] + radius * std::cos(angle),
                 config_.object_pos[1],

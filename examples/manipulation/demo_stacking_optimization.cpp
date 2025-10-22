@@ -79,9 +79,9 @@ public:
     StackingSimulation(const StackingTaskConfig& config) : config_(config) {
         // Initialize contact solver
         typename DifferentiableContactSolver<float>::SolverParams solver_params;
-        solver_params.max_iterations = 50;
-        solver_params.tolerance = 1e-6f;
-        solver_params.contact_stiffness = 0.3f;
+        solver_params.max_iterations = 100;  // Increased for better convergence
+        solver_params.tolerance = 1e-4f;     // Relaxed from 1e-6
+        solver_params.contact_stiffness = 0.01f;  // Reduced for reasonable forces
         solver_params.relaxation = 0.8f;
         solver_params.use_friction = true;
 
@@ -129,8 +129,8 @@ public:
                 auto solution = contact_solver_->solveContacts(
                     contacts, velocities, masses, config_.dt);
 
-                // Apply contact impulses
-                if (solution.converged && !contacts.empty()) {
+                // Apply contact impulses (even if not fully converged)
+                if (!contacts.empty() && !solution.normal_impulses.empty()) {
                     for (size_t c = 0; c < contacts.size(); ++c) {
                         int body_a = contacts[c].body_a_id;
                         int body_b = contacts[c].body_b_id;
@@ -179,7 +179,7 @@ public:
             auto solution = contact_solver_->solveContacts(
                 contacts, velocities, masses, config_.dt);
 
-            if (solution.converged && !contacts.empty()) {
+            if (!contacts.empty() && !solution.normal_impulses.empty()) {
                 for (size_t c = 0; c < contacts.size(); ++c) {
                     int body_a = contacts[c].body_a_id;
                     int body_b = contacts[c].body_b_id;
