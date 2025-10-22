@@ -203,7 +203,8 @@ public:
         std::vector<float> masses;
         masses.push_back(config_.object_mass);
         for (size_t i = 0; i < finger_positions.size(); ++i) {
-            masses.push_back(config_.finger_mass);
+            // Use very high mass for kinematic fingers (infinite mass approximation)
+            masses.push_back(1000.0f);
         }
 
         std::vector<float> radii;
@@ -260,6 +261,12 @@ public:
 
             // Apply gravity to object
             velocities[0][1] -= config_.gravity * config_.dt;
+
+            // Apply velocity damping to prevent numerical instability
+            const float damping = 0.95f;
+            for (size_t i = 0; i < velocities.size(); ++i) {
+                velocities[i] = velocities[i] * damping;
+            }
 
             // Integrate
             for (size_t i = 0; i < positions.size(); ++i) {
@@ -384,9 +391,28 @@ public:
                 }
             }
 
+            // Clip gradients to prevent explosion
+            const float max_gradient = 10.0f;
+            for (int f = 0; f < config_.num_fingers; ++f) {
+                for (int dim = 0; dim < 3; ++dim) {
+                    if (gradients[f][dim] > max_gradient) gradients[f][dim] = max_gradient;
+                    if (gradients[f][dim] < -max_gradient) gradients[f][dim] = -max_gradient;
+                }
+            }
+
             // Gradient descent update
             for (int f = 0; f < config_.num_fingers; ++f) {
                 finger_positions_[f] = finger_positions_[f] - gradients[f] * config_.learning_rate;
+
+                // Constrain fingers to stay within reasonable distance from object
+                auto to_finger = finger_positions_[f] - config_.object_pos;
+                float dist = std::sqrt(to_finger[0]*to_finger[0] + to_finger[1]*to_finger[1] + to_finger[2]*to_finger[2]);
+                if (dist > 0.3f) {  // Max 30cm from object
+                    finger_positions_[f] = config_.object_pos + to_finger * (0.3f / dist);
+                }
+                if (dist < 0.08f) {  // Min 8cm (allow some contact but not too deep)
+                    finger_positions_[f] = config_.object_pos + to_finger * (0.08f / dist);
+                }
             }
 
             // Compute finger spread (avg distance from object)
@@ -442,7 +468,7 @@ int main(int argc, char** argv) {
     GraspingTaskConfig config;
     config.num_fingers = 3;
     config.num_optimization_iters = 80;
-    config.learning_rate = 0.005f;
+    config.learning_rate = 0.001f;  // Reduced from 0.005 for stability
     config.print_every = 10;
 
     // Run optimization

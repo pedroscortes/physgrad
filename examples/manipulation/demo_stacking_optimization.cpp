@@ -81,7 +81,7 @@ public:
         typename DifferentiableContactSolver<float>::SolverParams solver_params;
         solver_params.max_iterations = 100;  // Increased for better convergence
         solver_params.tolerance = 1e-4f;     // Relaxed from 1e-6
-        solver_params.contact_stiffness = 0.01f;  // Reduced for reasonable forces
+        solver_params.contact_stiffness = 0.001f;  // Very low for gentle multi-body contacts
         solver_params.relaxation = 0.8f;
         solver_params.use_friction = true;
 
@@ -150,6 +150,19 @@ public:
                     velocities[i][1] -= config_.gravity * config_.dt;
                 }
 
+                // Apply velocity damping to prevent numerical instability
+                const float damping = 0.95f;  // More aggressive for multi-body stability
+                const float max_velocity = 0.5f;  // Clamp velocities to prevent explosion
+                for (int i = 0; i < config_.num_blocks; ++i) {
+                    velocities[i] = velocities[i] * damping;
+
+                    // Clamp each component
+                    for (int d = 0; d < 3; ++d) {
+                        if (velocities[i][d] > max_velocity) velocities[i][d] = max_velocity;
+                        if (velocities[i][d] < -max_velocity) velocities[i][d] = -max_velocity;
+                    }
+                }
+
                 // Integrate
                 for (int i = 0; i < config_.num_blocks; ++i) {
                     positions[i] = positions[i] + velocities[i] * config_.dt;
@@ -196,6 +209,19 @@ public:
 
             for (int i = 0; i < config_.num_blocks; ++i) {
                 velocities[i][1] -= config_.gravity * config_.dt;
+            }
+
+            // Apply velocity damping (stability check)
+            const float damping = 0.95f;
+            const float max_velocity = 0.5f;
+            for (int i = 0; i < config_.num_blocks; ++i) {
+                velocities[i] = velocities[i] * damping;
+
+                // Clamp each component
+                for (int d = 0; d < 3; ++d) {
+                    if (velocities[i][d] > max_velocity) velocities[i][d] = max_velocity;
+                    if (velocities[i][d] < -max_velocity) velocities[i][d] = -max_velocity;
+                }
             }
 
             for (int i = 0; i < config_.num_blocks; ++i) {
@@ -320,6 +346,15 @@ public:
                 }
             }
 
+            // Clip gradients to prevent explosion
+            const float max_gradient = 5.0f;
+            for (int b = 0; b < config_.num_blocks; ++b) {
+                for (int dim = 0; dim < 3; ++dim) {
+                    if (gradients[b][dim] > max_gradient) gradients[b][dim] = max_gradient;
+                    if (gradients[b][dim] < -max_gradient) gradients[b][dim] = -max_gradient;
+                }
+            }
+
             // Gradient descent update
             for (int b = 0; b < config_.num_blocks; ++b) {
                 placement_positions_[b] = placement_positions_[b] - gradients[b] * config_.learning_rate;
@@ -327,6 +362,11 @@ public:
                 // Constrain to reasonable placement region
                 placement_positions_[b][1] = std::max(config_.block_size / 2.0f,
                                                      placement_positions_[b][1]);
+                placement_positions_[b][1] = std::min(1.0f, placement_positions_[b][1]);  // Max 1m height
+
+                // Keep blocks very close to tower base (tight constraints for stability)
+                placement_positions_[b][0] = std::max(-0.05f, std::min(0.05f, placement_positions_[b][0]));
+                placement_positions_[b][2] = std::max(-0.05f, std::min(0.05f, placement_positions_[b][2]));
             }
 
             // Compute metrics for display
@@ -398,7 +438,7 @@ int main(int argc, char** argv) {
     StackingTaskConfig config;
     config.num_blocks = 3;
     config.num_optimization_iters = 30;
-    config.learning_rate = 0.003f;
+    config.learning_rate = 0.001f;  // Reduced from 0.003 for stability
     config.print_every = 5;
 
     // Run optimization

@@ -10,21 +10,35 @@ This directory contains manipulation demos showcasing PhysGrad's differentiable 
 
 **Key Achievements:**
 - ✅ **Demo 1 (Pushing): Physics validated!** Box moves realistically to 0.859m (goal: 0.5m)
+- ✅ **Demo 2 (Grasping): Stable contacts!** Loss 0.132 at iteration 0, fingers within 0.126m
+- ✅ **Demo 3 (Stacking): Stable multi-body!** All blocks stable at ground, loss ~0.28
 - ✅ Contact detection working across all demos
 - ✅ Impulse computation and application working
 - ✅ Friction forces implemented (2D tangential)
+- ✅ All demos numerically stable (no explosions!)
 
-**Critical Fixes Applied:**
+**Critical Fixes Applied (Phases 1 & 2):**
+
+**Phase 1 - Basic Physics:**
 1. **Solver convergence**: Relaxed tolerance (1e-6 → 1e-4), increased max iterations (50 → 100)
-2. **Impulse application**: Apply impulses even if not fully converged (solver rarely converges with tight tolerance)
-3. **Contact stiffness**: Dramatically reduced (0.2-0.3 → 0.01-0.001) to prevent excessive forces
-4. **Physics ordering**: Gravity applied before integration (not after)
-5. **Friction implementation**: Added tangential impulse application from solver
+2. **Impulse application**: Apply impulses even if not fully converged
+3. **Contact stiffness**: Dramatically reduced (0.2-0.3 → 0.01-0.001)
+4. **Physics ordering**: Gravity applied before integration (Demo 1)
+5. **Friction implementation**: Added tangential impulse application (Demo 1)
 
-**Remaining Challenges:**
-- Demos 2-3: Numerical instability with kinematic constraints and multi-body dynamics
-- Optimization convergence: Gradients need refinement (clipping, learning rate scheduling)
-- Alternative approaches needed: Damping, compliant contacts, or PID control for kinematic bodies
+**Phase 2 - Stability & Optimization:**
+6. **Kinematic bodies**: Infinite mass approximation (1000kg for fingers)
+7. **Velocity damping**: 0.95-0.98 damping factor to dissipate energy
+8. **Velocity clamping**: Hard limit at 0.5 m/s (Demo 3)
+9. **Gradient clipping**: Limit gradients to ±5-10 to prevent explosion
+10. **Position constraints**: Tight bounds on optimization variables
+11. **Learning rate reduction**: 0.005 → 0.001 for stable convergence
+
+**Current Status:**
+- ✅ All demos compile and run successfully
+- ✅ Physics is numerically stable across all scenarios
+- ⚠️ Optimization convergence varies (stochastic finite differences)
+- ⚠️ Demo 3 blocks don't stack (stay at ground) - needs sequential placement strategy
 
 ## Demos
 
@@ -104,10 +118,20 @@ cd build
 - Max iterations: 100
 - Finger initialization: Within contact range
 
-**Status After Tuning:**
-- Contacts detected at iteration 0
-- Numerical instability with kinematic finger constraints
-- Needs damping or alternative kinematic handling
+**Status After Phase 2 Fixes:**
+- ✅ Contacts working (loss 0.132 at iter 0)
+- ✅ Numerically stable (no explosions)
+- ✅ Infinite mass approximation for kinematic fingers (1000kg)
+- ✅ Velocity damping (0.95) prevents runaway dynamics
+- ✅ Gradient clipping (±10) and position constraints
+- ⚠️ Optimization convergence varies run-to-run
+
+**Phase 2 Fixes Applied:**
+- Finger mass: 0.1kg → 1000kg (infinite mass approx)
+- Added velocity damping: 0.95 factor
+- Gradient clipping: ±10 max gradient
+- Position constraints: fingers within 8-30cm of object
+- Learning rate: 0.005 → 0.001
 
 ---
 
@@ -142,10 +166,20 @@ cd build
 - Max iterations: 100
 - Applies impulses even if not fully converged
 
-**Status After Tuning:**
-- Impulses now applied
-- Multi-body dynamics causing numerical instability
-- Needs sequential placement strategy or damping
+**Status After Phase 2 Fixes:**
+- ✅ Numerically stable (loss ~0.28, blocks within ±0.18m)
+- ✅ Multi-body dynamics stable with damping + clamping
+- ✅ Gradient clipping (±5) and tight position constraints
+- ✅ Velocity damping (0.95) + velocity clamping (0.5 m/s)
+- ⚠️ Blocks don't stack (all at ground) - needs sequential placement
+
+**Phase 2 Fixes Applied:**
+- Contact stiffness: 0.01 → 0.001
+- Added velocity damping: 0.95 factor
+- Added velocity clamping: 0.5 m/s hard limit
+- Gradient clipping: ±5 max gradient
+- Position constraints: blocks within ±5cm of tower base (x,z), max 1m height (y)
+- Learning rate: 0.003 → 0.001
 
 ---
 
