@@ -81,24 +81,35 @@ public:
             forces[spring.particle1] = forces[spring.particle1] + force;
             forces[spring.particle2] = forces[spring.particle2] + ConceptVector3D<T>{-force[0], -force[1], -force[2]};
 
-            // Simplified Jacobian (diagonal terms only for testing)
-            T jac_diag = spring.spring_constant;
+            // Proper spring force Jacobian
+            // F_1 = k * (|r| - r0) * r/|r|, where r = r2 - r1
+            // ∂F_1/∂r_1 = -k * [(1 - r0/|r|) * I + (r0/|r|^3) * r⊗r]
+            // ∂F_1/∂r_2 = k * [(1 - r0/|r|) * I + (r0/|r|^3) * r⊗r]
 
-            jacobian[spring.particle1][spring.particle1][0][0] = jac_diag;
-            jacobian[spring.particle1][spring.particle1][1][1] = jac_diag;
-            jacobian[spring.particle1][spring.particle1][2][2] = jac_diag;
+            T k = spring.spring_constant;
+            T r0 = spring.rest_length;
+            T tangential = k * (T{1} - r0 / dist);
+            T radial = k * r0 / (dist * dist * dist);
 
-            jacobian[spring.particle2][spring.particle2][0][0] = jac_diag;
-            jacobian[spring.particle2][spring.particle2][1][1] = jac_diag;
-            jacobian[spring.particle2][spring.particle2][2][2] = jac_diag;
+            // Compute full 3x3 Jacobian blocks
+            for (size_t i = 0; i < 3; ++i) {
+                for (size_t j = 0; j < 3; ++j) {
+                    T identity = (i == j) ? T{1} : T{0};
+                    T jac_element = tangential * identity + radial * dr[i] * dr[j];
 
-            jacobian[spring.particle1][spring.particle2][0][0] = -jac_diag;
-            jacobian[spring.particle1][spring.particle2][1][1] = -jac_diag;
-            jacobian[spring.particle1][spring.particle2][2][2] = -jac_diag;
+                    // ∂F_1/∂r_1
+                    jacobian[spring.particle1][spring.particle1][i][j] -= jac_element;
 
-            jacobian[spring.particle2][spring.particle1][0][0] = -jac_diag;
-            jacobian[spring.particle2][spring.particle1][1][1] = -jac_diag;
-            jacobian[spring.particle2][spring.particle1][2][2] = -jac_diag;
+                    // ∂F_1/∂r_2
+                    jacobian[spring.particle1][spring.particle2][i][j] += jac_element;
+
+                    // ∂F_2/∂r_1 = -∂F_1/∂r_1
+                    jacobian[spring.particle2][spring.particle1][i][j] += jac_element;
+
+                    // ∂F_2/∂r_2 = -∂F_1/∂r_2
+                    jacobian[spring.particle2][spring.particle2][i][j] -= jac_element;
+                }
+            }
         }
 
         return {forces, jacobian};
@@ -276,46 +287,129 @@ public:
         auto pos_adjoints = state_manager_->getPositionAdjoints();
         auto vel_adjoints = state_manager_->getVelocityAdjoints();
 
-        // Compute force Jacobians at checkpoint positions
-        auto [_, force_jacobians] = force_engine_->computeForcesAndGradients(positions);
+        // Recompute forward pass intermediate values for backward pass
+        std::vector<vector_type> accelerations(n_particles);
+        for (size_t i = 0; i < n_particles; ++i) {
+            for (size_t j = 0; j < 3; ++j) {
+                accelerations[i][j] = forces[i][j] / masses[i];
+            }
+        }
+
+        std::vector<vector_type> new_positions(n_particles);
+        for (size_t i = 0; i < n_particles; ++i) {
+            for (size_t j = 0; j < 3; ++j) {
+                new_positions[i][j] = positions[i][j] + velocities[i][j] * dt +
+                                     T(0.5) * accelerations[i][j] * dt * dt;
+            }
+        }
+
+        // Compute forces and Jacobians at both t and t+dt
+        auto [_, force_jacobians_t] = force_engine_->computeForcesAndGradients(positions);
+        auto [new_forces, force_jacobians_t_plus_dt] = force_engine_->computeForcesAndGradients(new_positions);
+
+        std::vector<vector_type> new_accelerations(n_particles);
+        for (size_t i = 0; i < n_particles; ++i) {
+            for (size_t j = 0; j < 3; ++j) {
+                new_accelerations[i][j] = new_forces[i][j] / masses[i];
+            }
+        }
 
         // Backward pass through Verlet integration
-        std::vector<vector_type> new_pos_adjoints(n_particles);
-        std::vector<vector_type> new_vel_adjoints(n_particles);
+        // Initialize adjoints for intermediate variables
+        std::vector<vector_type> adjoint_a_t(n_particles);  // ∂L/∂a(t)
+        std::vector<vector_type> adjoint_a_t_dt(n_particles);  // ∂L/∂a(t+dt)
+        std::vector<vector_type> adjoint_x_t_dt(n_particles);  // ∂L/∂x(t+dt)
+        std::vector<vector_type> new_pos_adjoints(n_particles);  // ∂L/∂x(t)
+        std::vector<vector_type> new_vel_adjoints(n_particles);  // ∂L/∂v(t)
         std::vector<T> new_mass_adjoints(masses.size(), T{0});
 
-        // Reverse the velocity update: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
+        // Step 1: Backprop from v(t+dt)
+        // v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
         for (size_t i = 0; i < n_particles; ++i) {
             // ∂L/∂v(t) = ∂L/∂v(t+dt)
             new_vel_adjoints[i] = vel_adjoints[i];
 
-            // Add contribution from position update: x(t+dt) = x(t) + v(t)*dt + ...
+            // ∂L/∂a(t) += ∂L/∂v(t+dt) * 0.5*dt
+            // ∂L/∂a(t+dt) += ∂L/∂v(t+dt) * 0.5*dt
             for (size_t j = 0; j < 3; ++j) {
-                new_vel_adjoints[i][j] += pos_adjoints[i][j] * dt;
+                adjoint_a_t[i][j] = T(0.5) * vel_adjoints[i][j] * dt;
+                adjoint_a_t_dt[i][j] = T(0.5) * vel_adjoints[i][j] * dt;
             }
         }
 
-        // Reverse the position update: x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt²
+        // Step 2: Backprop from x(t+dt)
+        // x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt²
         for (size_t i = 0; i < n_particles; ++i) {
-            // ∂L/∂x(t) = ∂L/∂x(t+dt)
+            // ∂L/∂x(t) starts with direct contribution
             new_pos_adjoints[i] = pos_adjoints[i];
 
-            // Add contributions from force terms
+            // ∂L/∂v(t) += ∂L/∂x(t+dt) * dt
             for (size_t j = 0; j < 3; ++j) {
-                // Contribution from acceleration: a = F/m
-                T accel_contrib = T(0.5) * pos_adjoints[i][j] * dt * dt / masses[i];
+                new_vel_adjoints[i][j] += pos_adjoints[i][j] * dt;
+            }
 
-                // Backpropagate through forces using chain rule
+            // ∂L/∂a(t) += ∂L/∂x(t+dt) * 0.5*dt²
+            for (size_t j = 0; j < 3; ++j) {
+                adjoint_a_t[i][j] += pos_adjoints[i][j] * T(0.5) * dt * dt;
+            }
+        }
+
+        // Step 3: Backprop from a(t+dt) through F(x(t+dt))
+        // a(t+dt) = F(x(t+dt)) / m
+        for (size_t i = 0; i < n_particles; ++i) {
+            for (size_t j = 0; j < 3; ++j) {
+                // ∂L/∂F(t+dt) = ∂L/∂a(t+dt) / m
+                T adjoint_force_t_dt = adjoint_a_t_dt[i][j] / masses[i];
+
+                // ∂L/∂x(t+dt) += ∂L/∂F(t+dt) * ∂F/∂x
                 for (size_t k = 0; k < n_particles; ++k) {
                     for (size_t l = 0; l < 3; ++l) {
-                        // ∂F_i^j/∂x_k^l from force Jacobian
-                        T force_jac = getForceJacobian(force_jacobians, i, j, k, l);
-                        new_pos_adjoints[k][l] += accel_contrib * force_jac;
+                        T force_jac = getForceJacobian(force_jacobians_t_plus_dt, i, j, k, l);
+                        adjoint_x_t_dt[k][l] += adjoint_force_t_dt * force_jac;
                     }
                 }
 
-                // Contribution to mass gradient
-                new_mass_adjoints[i] -= accel_contrib * forces[i][j] / masses[i];
+                // ∂L/∂m += -∂L/∂a(t+dt) * F(t+dt) / m²
+                new_mass_adjoints[i] -= adjoint_a_t_dt[i][j] * new_forces[i][j] / masses[i];
+            }
+        }
+
+        // Step 4: Backprop from x(t+dt) to x(t), v(t), a(t)
+        // x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt²
+        for (size_t i = 0; i < n_particles; ++i) {
+            // ∂L/∂x(t) += ∂L/∂x(t+dt)
+            for (size_t j = 0; j < 3; ++j) {
+                new_pos_adjoints[i][j] += adjoint_x_t_dt[i][j];
+            }
+
+            // ∂L/∂v(t) += ∂L/∂x(t+dt) * dt
+            for (size_t j = 0; j < 3; ++j) {
+                new_vel_adjoints[i][j] += adjoint_x_t_dt[i][j] * dt;
+            }
+
+            // ∂L/∂a(t) += ∂L/∂x(t+dt) * 0.5*dt²
+            for (size_t j = 0; j < 3; ++j) {
+                adjoint_a_t[i][j] += adjoint_x_t_dt[i][j] * T(0.5) * dt * dt;
+            }
+        }
+
+        // Step 5: Backprop from a(t) through F(x(t))
+        // a(t) = F(x(t)) / m
+        for (size_t i = 0; i < n_particles; ++i) {
+            for (size_t j = 0; j < 3; ++j) {
+                // ∂L/∂F(t) = ∂L/∂a(t) / m
+                T adjoint_force_t = adjoint_a_t[i][j] / masses[i];
+
+                // ∂L/∂x(t) += ∂L/∂F(t) * ∂F/∂x
+                for (size_t k = 0; k < n_particles; ++k) {
+                    for (size_t l = 0; l < 3; ++l) {
+                        T force_jac = getForceJacobian(force_jacobians_t, i, j, k, l);
+                        new_pos_adjoints[k][l] += adjoint_force_t * force_jac;
+                    }
+                }
+
+                // ∂L/∂m += -∂L/∂a(t) * F(t) / m²
+                new_mass_adjoints[i] -= adjoint_a_t[i][j] * forces[i][j] / masses[i];
             }
         }
 
