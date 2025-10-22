@@ -60,11 +60,27 @@ set_target_properties(demo_fsi_drag_optimization PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
+# Robot Co-Design Demo: Morphology + Control Optimization
+add_executable(demo_robot_codesign
+    demo_robot_codesign.cpp
+)
+
+target_link_libraries(demo_robot_codesign
+    physgrad_core
+    pthread
+)
+
+set_target_properties(demo_robot_codesign PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
 # Installation
 install(TARGETS
     demo_pushing_optimization
     demo_grasping_optimization
     demo_stacking_optimization
     demo_fsi_drag_optimization
+    demo_robot_codesign
     RUNTIME DESTINATION bin/examples
 )
