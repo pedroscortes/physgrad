@@ -39,15 +39,66 @@ cd build
 
 ---
 
-### Demo 2: Grasping Optimization
-**Status:** Planned
-**Task:** Optimize gripper configuration for stable grasp
+### Demo 2: Grasping Optimization ✅
+**Status:** Initial implementation complete
+**File:** `demo_grasping_optimization.cpp`
+**Task:** Optimize gripper finger positions for stable grasp
+
+**Features:**
+- Multi-finger grasp optimization (3-finger gripper)
+- Force closure quality metrics
+- Contact normal alignment
+- Grasp stability analysis
+
+**How to Run:**
+```bash
+cd build
+./examples/demo_grasping_optimization
+```
+
+**Current Status:**
+- ✅ Framework implemented
+- ✅ Compiles and runs
+- ⚠️ Contact detection needs tuning (no contact currently)
+- 🔄 Grasp quality metrics operational
+- 🔄 Optimization loop functional
+
+**Baseline Performance:**
+- Loss: 1000.0 (no contact penalty)
+- Finger spread: 0.15m
+- No contact achieved yet
 
 ---
 
-### Demo 3: Object Stacking
-**Status:** Planned
-**Task:** Stack blocks using learned placement policy
+### Demo 3: Object Stacking ✅
+**Status:** Initial implementation complete
+**File:** `demo_stacking_optimization.cpp`
+**Task:** Stack blocks to build stable tower
+
+**Features:**
+- Sequential manipulation planning
+- Multi-object physics simulation
+- Stability analysis through extended simulation
+- Tower height and alignment optimization
+
+**How to Run:**
+```bash
+cd build
+./examples/demo_stacking_optimization
+```
+
+**Current Status:**
+- ✅ Framework implemented
+- ✅ Compiles and runs
+- ⚠️ Block placement physics needs tuning
+- 🔄 Stability metrics operational
+- 🔄 Optimization loop functional
+
+**Baseline Performance:**
+- Loss: -0.1
+- Tower height: 0.05m (ground level)
+- Stability: 0.0m (perfectly stable but not stacked)
+- All blocks at ground level
 
 ---
 
