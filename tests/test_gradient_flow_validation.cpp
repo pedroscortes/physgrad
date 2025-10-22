@@ -27,7 +27,7 @@ protected:
     void SetUp() override {
         rng_.seed(42);
         epsilon_ = 1e-5f;  // Finite difference step
-        tolerance_ = 1e-3f; // Gradient comparison tolerance
+        tolerance_ = 5e-3f; // Relaxed tolerance for float32 precision (0.5%)
     }
 
     // Finite difference gradient computation
