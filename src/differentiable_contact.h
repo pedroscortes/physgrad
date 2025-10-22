@@ -210,6 +210,7 @@ public:
         T restitution = T{0.2};        // Coefficient of restitution
         T contact_stiffness = T{0.2};  // Baumgarte bias factor β (typically 0.1-0.3)
         T contact_damping = T{0.0};    // Contact damping (deprecated, not used)
+        T relaxation = T{0.8};         // Successive over-relaxation (SOR) parameter (0.5-1.0)
         bool use_friction = true;
         bool warm_start = true;
     };
@@ -264,9 +265,9 @@ public:
                 // Compute diagonal mass matrix element
                 T diagonal_mass = computeDiagonalMass(c, contacts, masses);
 
-                // Update impulse
+                // Update impulse with relaxation for better convergence
                 T delta_impulse = -constraint_violation / (diagonal_mass + T{1e-12});
-                T new_impulse = old_impulse + delta_impulse;
+                T new_impulse = old_impulse + params_.relaxation * delta_impulse;
 
                 // Project to non-negative (no adhesion)
                 new_impulse = std::max(new_impulse, T{0});
@@ -430,11 +431,56 @@ private:
         }
 
         T total_inv_mass = inv_mass_a + inv_mass_b;
-        return (total_inv_mass > T{1e-10}) ? T{1} / total_inv_mass : T{1e12};
+
+        // Add small regularization for extreme mass ratios to improve conditioning
+        // This helps when one mass >> other mass (e.g., 1000:1 ratio)
+        T regularization = T{1e-8};
+        total_inv_mass += regularization;
+
+        return T{1} / total_inv_mass;
     }
 
     /**
-     * Solve friction constraints using Coulomb friction model
+     * Compute orthonormal tangent basis from normal vector
+     * Uses Gram-Schmidt to construct (tangent_u, tangent_v) orthogonal to normal
+     */
+    void computeTangentBasis(
+        const ConceptVector3D<T>& normal,
+        ConceptVector3D<T>& tangent_u,
+        ConceptVector3D<T>& tangent_v) {
+
+        // Choose an arbitrary vector not parallel to normal
+        ConceptVector3D<T> arbitrary;
+        if (std::abs(normal[0]) < 0.9f) {
+            arbitrary = ConceptVector3D<T>(1.0f, 0.0f, 0.0f);
+        } else {
+            arbitrary = ConceptVector3D<T>(0.0f, 1.0f, 0.0f);
+        }
+
+        // First tangent: u = arbitrary - (arbitrary · n) * n
+        T dot = arbitrary[0] * normal[0] + arbitrary[1] * normal[1] + arbitrary[2] * normal[2];
+        tangent_u = ConceptVector3D<T>(
+            arbitrary[0] - dot * normal[0],
+            arbitrary[1] - dot * normal[1],
+            arbitrary[2] - dot * normal[2]
+        );
+
+        // Normalize
+        T len = std::sqrt(tangent_u[0]*tangent_u[0] + tangent_u[1]*tangent_u[1] + tangent_u[2]*tangent_u[2]);
+        if (len > 1e-10f) {
+            tangent_u = ConceptVector3D<T>(tangent_u[0]/len, tangent_u[1]/len, tangent_u[2]/len);
+        }
+
+        // Second tangent: v = n × u (cross product)
+        tangent_v = ConceptVector3D<T>(
+            normal[1] * tangent_u[2] - normal[2] * tangent_u[1],
+            normal[2] * tangent_u[0] - normal[0] * tangent_u[2],
+            normal[0] * tangent_u[1] - normal[1] * tangent_u[0]
+        );
+    }
+
+    /**
+     * Solve friction constraints using Coulomb friction model with proper 3D projection
      */
     void solveFrictionConstraints(
         const std::vector<ContactPoint<T>>& contacts,
@@ -442,29 +488,74 @@ private:
         const std::vector<T>& masses,
         ContactSolution<T>& solution) {
 
-        // Simplified friction: proportional to normal force
         for (size_t c = 0; c < contacts.size(); ++c) {
             const auto& contact = contacts[c];
             T normal_impulse = solution.normal_impulses[c];
-            T max_friction = contact.friction_coefficient * normal_impulse;
 
-            // Compute tangential velocity (simplified 1D)
-            T rel_tangent_vel;
-            if (contact.body_b_id != SIZE_MAX) {
-                rel_tangent_vel =
-                    (velocities[contact.body_b_id][0] - velocities[contact.body_a_id][0]) -
-                    (velocities[contact.body_b_id][0] - velocities[contact.body_a_id][0]) *
-                    contact.normal[0] * contact.normal[0];
-            } else {
-                rel_tangent_vel = velocities[contact.body_a_id][0] -
-                                 velocities[contact.body_a_id][0] * contact.normal[0] * contact.normal[0];
+            if (normal_impulse < 1e-10f) {
+                // No contact, no friction
+                solution.friction_impulses_u[c] = T{0};
+                solution.friction_impulses_v[c] = T{0};
+                continue;
             }
 
-            // Apply friction impulse
-            T friction_impulse = std::clamp(-rel_tangent_vel * masses[contact.body_a_id],
-                                           -max_friction, max_friction);
+            T max_friction = contact.friction_coefficient * normal_impulse;
 
-            solution.friction_impulses_u[c] = friction_impulse;
+            // Compute relative velocity
+            ConceptVector3D<T> v_rel;
+            if (contact.body_b_id != SIZE_MAX) {
+                v_rel = ConceptVector3D<T>(
+                    velocities[contact.body_b_id][0] - velocities[contact.body_a_id][0],
+                    velocities[contact.body_b_id][1] - velocities[contact.body_a_id][1],
+                    velocities[contact.body_b_id][2] - velocities[contact.body_a_id][2]
+                );
+            } else {
+                // Contact with ground (body B is stationary)
+                v_rel = ConceptVector3D<T>(
+                    -velocities[contact.body_a_id][0],
+                    -velocities[contact.body_a_id][1],
+                    -velocities[contact.body_a_id][2]
+                );
+            }
+
+            // Project out normal component: v_tangent = v_rel - (v_rel · n) * n
+            T v_dot_n = v_rel[0] * contact.normal[0] +
+                       v_rel[1] * contact.normal[1] +
+                       v_rel[2] * contact.normal[2];
+
+            ConceptVector3D<T> v_tangent(
+                v_rel[0] - v_dot_n * contact.normal[0],
+                v_rel[1] - v_dot_n * contact.normal[1],
+                v_rel[2] - v_dot_n * contact.normal[2]
+            );
+
+            // Compute tangent basis vectors
+            ConceptVector3D<T> tangent_u, tangent_v;
+            computeTangentBasis(contact.normal, tangent_u, tangent_v);
+
+            // Project tangential velocity onto basis
+            T v_u = v_tangent[0] * tangent_u[0] + v_tangent[1] * tangent_u[1] + v_tangent[2] * tangent_u[2];
+            T v_v = v_tangent[0] * tangent_v[0] + v_tangent[1] * tangent_v[1] + v_tangent[2] * tangent_v[2];
+
+            // Compute effective mass for friction
+            T eff_mass = computeDiagonalMass(c, contacts, masses);
+
+            // Compute desired friction impulses (oppose tangential motion)
+            T impulse_u = -v_u * eff_mass;
+            T impulse_v = -v_v * eff_mass;
+
+            // Apply Coulomb friction cone constraint: ||f_tangent|| <= μ * f_normal
+            T impulse_mag = std::sqrt(impulse_u * impulse_u + impulse_v * impulse_v);
+
+            if (impulse_mag > max_friction) {
+                // Sliding: clamp to friction cone boundary
+                T scale = max_friction / (impulse_mag + 1e-10f);
+                impulse_u *= scale;
+                impulse_v *= scale;
+            }
+
+            solution.friction_impulses_u[c] = impulse_u;
+            solution.friction_impulses_v[c] = impulse_v;
         }
     }
 
