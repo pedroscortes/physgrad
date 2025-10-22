@@ -45,10 +45,26 @@ set_target_properties(demo_stacking_optimization PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
+# FSI Demo: Cylinder Drag Optimization
+add_executable(demo_fsi_drag_optimization
+    demo_fsi_drag_optimization.cpp
+)
+
+target_link_libraries(demo_fsi_drag_optimization
+    physgrad_core
+    pthread
+)
+
+set_target_properties(demo_fsi_drag_optimization PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
 # Installation
 install(TARGETS
     demo_pushing_optimization
     demo_grasping_optimization
     demo_stacking_optimization
+    demo_fsi_drag_optimization
     RUNTIME DESTINATION bin/examples
 )
