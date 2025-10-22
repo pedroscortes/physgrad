@@ -75,6 +75,21 @@ set_target_properties(demo_robot_codesign PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
+# Performance Profiling Tool
+add_executable(profile_fsi_demo
+    profile_fsi_demo.cpp
+)
+
+target_link_libraries(profile_fsi_demo
+    physgrad_core
+    pthread
+)
+
+set_target_properties(profile_fsi_demo PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
 # Installation
 install(TARGETS
     demo_pushing_optimization
