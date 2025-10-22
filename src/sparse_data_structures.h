@@ -239,6 +239,41 @@ public:
         return neighbors;
     }
 
+    // Phase 1 optimization: output parameter version to avoid allocation
+    void getNeighbors(T x, T y, T z, T radius, std::vector<IndexType>& neighbors_out) const {
+        neighbors_out.clear();
+
+        // Determine search radius in cells
+        IndexType search_radius_cells = static_cast<IndexType>(std::ceil(radius / cell_size_));
+        auto center_coords = getGridCoords(x, y, z);
+
+        T radius_sq = radius * radius;
+
+        // Search neighboring cells
+        for (IndexType dx = 0; dx <= 2 * search_radius_cells; ++dx) {
+            for (IndexType dy = 0; dy <= 2 * search_radius_cells; ++dy) {
+                for (IndexType dz = 0; dz <= 2 * search_radius_cells; ++dz) {
+                    IndexType gx = center_coords[0] + dx - search_radius_cells;
+                    IndexType gy = center_coords[1] + dy - search_radius_cells;
+                    IndexType gz = center_coords[2] + dz - search_radius_cells;
+
+                    // Check bounds
+                    if (gx >= grid_resolution_[0] || gy >= grid_resolution_[1] || gz >= grid_resolution_[2])
+                        continue;
+
+                    IndexType cell_id = mortonEncode3D(gx, gy, gz) % total_cells_;
+                    IndexType start_idx = cell_start_indices_[cell_id];
+                    IndexType count = cell_particle_counts_[cell_id];
+
+                    // Check particles in this cell
+                    for (IndexType i = 0; i < count; ++i) {
+                        neighbors_out.push_back(particle_indices_[start_idx + i]);
+                    }
+                }
+            }
+        }
+    }
+
     // Performance metrics
     struct HashTableStats {
         T average_particles_per_cell;

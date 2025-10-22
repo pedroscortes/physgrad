@@ -125,12 +125,21 @@ private:
     std::vector<T> force_distribution_weights_;
     std::vector<uint32_t> force_distribution_indices_;
 
+    // Pre-allocated buffers for neighbor queries (Phase 1 optimization)
+    mutable std::vector<uint32_t> neighbor_buffer_;
+    mutable std::vector<uint32_t> all_neighbors_buffer_;
+    static constexpr size_t expected_neighbors_ = 32; // Typical neighbor count
+
 public:
     ImmersedBoundaryMethod(T support_radius = 2.0f, T coupling_strength = 1.0f)
         : support_radius_(support_radius), coupling_strength_(coupling_strength),
           damping_factor_(0.1f), use_adaptive_radius_(false) {
 
         hash_cell_size_ = support_radius_ * 0.5f;
+
+        // Pre-allocate neighbor buffers (Phase 1 optimization)
+        neighbor_buffer_.reserve(expected_neighbors_);
+        all_neighbors_buffer_.reserve(expected_neighbors_);
     }
 
     void couple(ParticleSet& fluid_particles, ParticleSet& solid_particles,
@@ -163,37 +172,38 @@ public:
             T fx, fy, fz;
             fluid_particles.getPosition(i, fx, fy, fz);
 
-            auto solid_neighbors = getSolidNeighbors(fx, fy, fz, solid_particles);
+            // Phase 1 optimization: reuse pre-allocated buffer
+            getSolidNeighbors(fx, fy, fz, solid_particles, neighbor_buffer_);
 
             T total_force_x = 0, total_force_y = 0, total_force_z = 0;
 
-            for (uint32_t j : solid_neighbors) {
+            for (uint32_t j : neighbor_buffer_) {
                 T sx, sy, sz, svx, svy, svz;
                 solid_particles.getPosition(j, sx, sy, sz);
                 solid_particles.getVelocity(j, svx, svy, svz);
 
                 // Distance and delta function
+                // Phase 1 optimization: removed redundant distance check
+                // (spatial hash already guarantees distance < support_radius)
                 T dx = fx - sx, dy = fy - sy, dz = fz - sz;
                 T distance = std::sqrt(dx*dx + dy*dy + dz*dz);
 
-                if (distance < support_radius_) {
-                    T delta_weight = deltaFunction(distance);
-                    T solid_mass = solid_particles.getMass(j);
+                T delta_weight = deltaFunction(distance);
+                T solid_mass = solid_particles.getMass(j);
 
-                    // Fluid velocity
-                    T fvx, fvy, fvz;
-                    fluid_particles.getVelocity(i, fvx, fvy, fvz);
+                // Fluid velocity
+                T fvx, fvy, fvz;
+                fluid_particles.getVelocity(i, fvx, fvy, fvz);
 
-                    // Velocity difference
-                    T dvx = svx - fvx, dvy = svy - fvy, dvz = svz - fvz;
+                // Velocity difference
+                T dvx = svx - fvx, dvy = svy - fvy, dvz = svz - fvz;
 
-                    // Force based on velocity difference and solid mass
-                    T force_magnitude = coupling_strength_ * solid_mass * delta_weight;
+                // Force based on velocity difference and solid mass
+                T force_magnitude = coupling_strength_ * solid_mass * delta_weight;
 
-                    total_force_x += force_magnitude * dvx;
-                    total_force_y += force_magnitude * dvy;
-                    total_force_z += force_magnitude * dvz;
-                }
+                total_force_x += force_magnitude * dvx;
+                total_force_y += force_magnitude * dvy;
+                total_force_z += force_magnitude * dvz;
             }
 
             forces[i * 3] = total_force_x;
@@ -215,37 +225,38 @@ public:
             T sx, sy, sz;
             solid_particles.getPosition(i, sx, sy, sz);
 
-            auto fluid_neighbors = getFluidNeighbors(sx, sy, sz, fluid_particles);
+            // Phase 1 optimization: reuse pre-allocated buffer
+            getFluidNeighbors(sx, sy, sz, fluid_particles, neighbor_buffer_);
 
             T total_force_x = 0, total_force_y = 0, total_force_z = 0;
 
-            for (uint32_t j : fluid_neighbors) {
+            for (uint32_t j : neighbor_buffer_) {
                 T fx, fy, fz, fvx, fvy, fvz;
                 fluid_particles.getPosition(j, fx, fy, fz);
                 fluid_particles.getVelocity(j, fvx, fvy, fvz);
 
                 // Distance and delta function
+                // Phase 1 optimization: removed redundant distance check
+                // (spatial hash already guarantees distance < support_radius)
                 T dx = sx - fx, dy = sy - fy, dz = sz - fz;
                 T distance = std::sqrt(dx*dx + dy*dy + dz*dz);
 
-                if (distance < support_radius_) {
-                    T delta_weight = deltaFunction(distance);
-                    T fluid_mass = fluid_particles.getMass(j);
+                T delta_weight = deltaFunction(distance);
+                T fluid_mass = fluid_particles.getMass(j);
 
-                    // Solid velocity
-                    T svx, svy, svz;
-                    solid_particles.getVelocity(i, svx, svy, svz);
+                // Solid velocity
+                T svx, svy, svz;
+                solid_particles.getVelocity(i, svx, svy, svz);
 
-                    // Velocity difference (Newton's third law)
-                    T dvx = fvx - svx, dvy = fvy - svy, dvz = fvz - svz;
+                // Velocity difference (Newton's third law)
+                T dvx = fvx - svx, dvy = fvy - svy, dvz = fvz - svz;
 
-                    // Force based on fluid pressure and velocity
-                    T force_magnitude = coupling_strength_ * fluid_mass * delta_weight;
+                // Force based on fluid pressure and velocity
+                T force_magnitude = coupling_strength_ * fluid_mass * delta_weight;
 
-                    total_force_x += force_magnitude * dvx;
-                    total_force_y += force_magnitude * dvy;
-                    total_force_z += force_magnitude * dvz;
-                }
+                total_force_x += force_magnitude * dvx;
+                total_force_y += force_magnitude * dvy;
+                total_force_z += force_magnitude * dvz;
             }
 
             forces[i * 3] = total_force_x;
@@ -265,14 +276,15 @@ public:
             T fx, fy, fz;
             fluid_particles.getPosition(i, fx, fy, fz);
 
-            auto solid_neighbors = getSolidNeighbors(fx, fy, fz, solid_particles);
+            // Phase 1 optimization: reuse pre-allocated buffer
+            getSolidNeighbors(fx, fy, fz, solid_particles, neighbor_buffer_);
 
-            if (!solid_neighbors.empty()) {
+            if (!neighbor_buffer_.empty()) {
                 T weighted_velocity_x = 0, weighted_velocity_y = 0, weighted_velocity_z = 0;
                 T total_weight = 0;
 
                 // Compute weighted average of solid velocities
-                for (uint32_t j : solid_neighbors) {
+                for (uint32_t j : neighbor_buffer_) {
                     T sx, sy, sz, svx, svy, svz;
                     solid_particles.getPosition(j, sx, sy, sz);
                     solid_particles.getVelocity(j, svx, svy, svz);
@@ -320,9 +332,8 @@ public:
             T fx, fy, fz;
             fluid_particles.getPosition(i, fx, fy, fz);
 
-            // Count fluid neighbors for density estimation
-            auto fluid_neighbors = getFluidNeighbors(fx, fy, fz, fluid_particles);
-            auto solid_neighbors = getSolidNeighbors(fx, fy, fz, solid_particles);
+            // Phase 1 optimization: removed unused neighbor queries
+            // (calculateSolidVolumeFraction does its own query)
 
             // Adjust fluid mass based on local solid volume fraction
             T solid_volume_fraction = calculateSolidVolumeFraction(
@@ -423,47 +434,53 @@ private:
         spatial_hash_->buildHashTable(all_positions, total_particles);
     }
 
-    std::vector<uint32_t> getFluidNeighbors(T x, T y, T z,
-                                           const ParticleSet& fluid_particles) const {
-        if (!spatial_hash_) return {};
+    // Phase 1 optimization: use output parameter to avoid allocation
+    void getFluidNeighbors(T x, T y, T z, const ParticleSet& fluid_particles,
+                          std::vector<uint32_t>& fluid_neighbors_out) const {
+        fluid_neighbors_out.clear();
+        if (!spatial_hash_) return;
 
-        auto all_neighbors = spatial_hash_->getNeighbors(x, y, z, support_radius_);
-        std::vector<uint32_t> fluid_neighbors;
+        // Use pre-allocated buffer for all neighbors
+        all_neighbors_buffer_.clear();
+        spatial_hash_->getNeighbors(x, y, z, support_radius_, all_neighbors_buffer_);
 
-        for (uint32_t idx : all_neighbors) {
+        // Filter to only fluid particles
+        for (uint32_t idx : all_neighbors_buffer_) {
             if (idx < fluid_particles.size()) {
-                fluid_neighbors.push_back(idx);
+                fluid_neighbors_out.push_back(idx);
             }
         }
-
-        return fluid_neighbors;
     }
 
-    std::vector<uint32_t> getSolidNeighbors(T x, T y, T z,
-                                           const ParticleSet& solid_particles) const {
-        if (!spatial_hash_) return {};
+    // Phase 1 optimization: use output parameter to avoid allocation
+    void getSolidNeighbors(T x, T y, T z, const ParticleSet& solid_particles,
+                          std::vector<uint32_t>& solid_neighbors_out) const {
+        solid_neighbors_out.clear();
+        if (!spatial_hash_) return;
 
-        auto all_neighbors = spatial_hash_->getNeighbors(x, y, z, support_radius_);
-        std::vector<uint32_t> solid_neighbors;
+        // Use pre-allocated buffer for all neighbors
+        all_neighbors_buffer_.clear();
+        spatial_hash_->getNeighbors(x, y, z, support_radius_, all_neighbors_buffer_);
+
         size_t fluid_offset = spatial_hash_->getParticleIndices().size() - solid_particles.size();
 
-        for (uint32_t idx : all_neighbors) {
+        // Filter to only solid particles
+        for (uint32_t idx : all_neighbors_buffer_) {
             if (idx >= fluid_offset) {
-                solid_neighbors.push_back(idx - fluid_offset);
+                solid_neighbors_out.push_back(idx - fluid_offset);
             }
         }
-
-        return solid_neighbors;
     }
 
     T calculateSolidVolumeFraction(T x, T y, T z, const ParticleSet& solid_particles,
                                   T radius) const {
-        auto solid_neighbors = getSolidNeighbors(x, y, z, solid_particles);
+        // Phase 1 optimization: reuse pre-allocated buffer
+        getSolidNeighbors(x, y, z, solid_particles, neighbor_buffer_);
 
         T total_volume = 0.0;
         T search_volume = (4.0/3.0) * M_PI * radius * radius * radius;
 
-        for (uint32_t idx : solid_neighbors) {
+        for (uint32_t idx : neighbor_buffer_) {
             T sx, sy, sz;
             solid_particles.getPosition(idx, sx, sy, sz);
 
