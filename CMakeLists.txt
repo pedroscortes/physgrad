@@ -397,6 +397,12 @@ if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# Examples
+option(BUILD_EXAMPLES "Build manipulation examples" ON)
+if(BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
 # Installation
 set(INSTALL_TARGETS physgrad_core)
 if(WITH_CUDA)
