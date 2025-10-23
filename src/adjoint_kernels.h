@@ -78,6 +78,33 @@ void launch_sph_density_backward(
     cudaStream_t stream = 0
 );
 
+/**
+ * Launch backward pass for spring forces with parameter gradients
+ *
+ * NEW: Computes gradients w.r.t. spring constants and rest lengths
+ *      Enables material parameter optimization on GPU!
+ */
+
+// Spring connection structure (must match adjoint_kernels.cu)
+struct SpringConnection {
+    int particle1;
+    int particle2;
+    float spring_constant;
+    float rest_length;
+};
+
+void launch_spring_force_backward_with_parameters(
+    const float3* grad_forces,
+    float3* grad_positions,
+    float* grad_spring_constants,
+    float* grad_rest_lengths,
+    const float3* saved_positions,
+    const SpringConnection* springs,
+    int num_particles,
+    int num_springs,
+    cudaStream_t stream = 0
+);
+
 } // extern "C"
 
 // =============================================================================

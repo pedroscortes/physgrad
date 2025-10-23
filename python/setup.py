@@ -174,7 +174,32 @@ def get_extensions():
             extra_link_args=link_args,
         )
 
-    return [ext]
+    # Create lightweight adjoint verlet extension (no visualization dependencies)
+    adjoint_sources = ['src/adjoint_verlet_bindings.cpp']
+
+    adjoint_include_dirs = [
+        pybind11.get_include(),
+        '../src',
+        '/usr/include/eigen3',
+    ]
+
+    adjoint_cxx_flags = [
+        '-std=c++17',
+        '-O3',
+        '-fPIC',
+        '-Wall',
+        '-Wno-unused-variable',
+    ]
+
+    adjoint_ext = Pybind11Extension(
+        name='adjoint_verlet_cpp',
+        sources=adjoint_sources,
+        include_dirs=adjoint_include_dirs,
+        cxx_std=17,
+        extra_compile_args=adjoint_cxx_flags,
+    )
+
+    return [ext, adjoint_ext]
 
 
 # Read requirements

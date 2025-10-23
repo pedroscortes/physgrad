@@ -18,12 +18,15 @@
     #define PHYSGRAD_CONCEPTS_AVAILABLE
 #endif
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__)
     // CUDA compilation - use native CUDA types
     #include <cuda_runtime.h>
     #include <vector_types.h>
+#elif defined(CUDA_VERSION) || defined(__CUDA_RUNTIME_H__)
+    // CUDA runtime already included - don't redefine types
+    // Just use the types from cuda_runtime.h
 #else
-    // C++ compilation - define compatible types
+    // Pure C++ compilation - define compatible types
     struct float2 {
         float x, y;
         float2() : x(0.0f), y(0.0f) {}

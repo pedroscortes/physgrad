@@ -236,6 +236,7 @@ set(PHYSGRAD_CUDA_SOURCES
     src/fluid_kernels.cu
     # src/electromagnetic_fields_gpu.cu  # Missing dependency: sph_fluid_dynamics.h
     src/adjoint_kernels.cu
+    src/differentiable_contact_kernels.cu  # ✅ NEW: Differentiable contact mechanics
     src/pytorch_autograd.cu  # ✅ Re-enabled with PyTorch integration
     src/mpm_kernels.cu  # ✅ Fixed T3 template usage
     # src/mpm_g2p2g_kernels.cu  # Requires cuda_cooperative_groups.h (CUDA 9.0+)

@@ -195,28 +195,15 @@ TEST_F(GradientFlowValidationTest, MultiTimestepGradientAccumulation) {
         test_pos[0][0] += perturbation;
         auto test_vel = initial_velocities;
 
-        std::cout << "  [DEBUG numerical_loss] Initial test_pos[0][0] = " << test_pos[0][0] << std::endl;
-
         AdjointSimulation<float> temp_sim(force_engine);
         temp_sim.runForward(test_pos, test_vel, masses, dt, num_steps);
 
-        std::cout << "  [DEBUG numerical_loss] Final test_pos[0][0] = " << test_pos[0][0] << std::endl;
-        std::cout << "  [DEBUG numerical_loss] Final test_pos[1][0] = " << test_pos[1][0] << std::endl;
-
-        float loss = loss_function(test_pos, test_vel);
-        std::cout << "  [DEBUG numerical_loss] Loss = " << loss << std::endl;
-
-        return loss;
+        return loss_function(test_pos, test_vel);
     };
 
-    std::cout << "\nComputing loss_plus:" << std::endl;
     float loss_plus = numerical_loss(epsilon_);
-    std::cout << "\nComputing loss_minus:" << std::endl;
     float loss_minus = numerical_loss(-epsilon_);
     float numerical_grad = (loss_plus - loss_minus) / (2.0f * epsilon_);
-
-    std::cout << "\nloss_plus = " << loss_plus << ", loss_minus = " << loss_minus << std::endl;
-    std::cout << "Difference = " << (loss_plus - loss_minus) << std::endl;
 
     bool gradient_valid = validateGradient(
         pos_grads[0][0], numerical_grad, "dL/dx₀ (5 timesteps)");

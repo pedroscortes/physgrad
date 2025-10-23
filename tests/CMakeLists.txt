@@ -35,6 +35,8 @@ set(TEST_SOURCES
     test_frost_integrator.cpp
     test_frost_debug.cpp
     test_adjoint_debug.cpp
+    test_velocity_gradient_improvement.cpp
+    test_spring_parameter_optimization.cpp
 )
 
 if(WITH_PYTORCH AND TORCH_FOUND)
@@ -46,6 +48,7 @@ if(WITH_CUDA)
         test_cuda_kernels.cu
         test_mpm_kernels.cu
         test_adjoint_kernels.cu
+        test_cuda_adjoint_validation.cpp
     )
 endif()
 
@@ -88,6 +91,17 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
             CUDA_SEPARABLE_COMPILATION ON
             CUDA_RESOLVE_DEVICE_SYMBOLS ON
         )
+    endif()
+
+    # Special handling for CUDA validation test (C++ file but needs CUDA)
+    if(WITH_CUDA AND TEST_NAME STREQUAL "test_cuda_adjoint_validation")
+        # Don't link full physgrad_kernels (has missing symbols)
+        # Just link CUDA runtime and compile the required kernel files separately
+        target_link_libraries(${TEST_NAME} CUDA::cudart)
+
+        # Add the adjoint kernels object file directly
+        target_sources(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src/adjoint_kernels.cu)
+        set_source_files_properties(${CMAKE_SOURCE_DIR}/src/adjoint_kernels.cu PROPERTIES LANGUAGE CUDA)
     endif()
 
     # Link PyTorch for PyTorch integration tests
