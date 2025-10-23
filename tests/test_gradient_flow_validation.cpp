@@ -177,16 +177,12 @@ TEST_F(GradientFlowValidationTest, MultiTimestepGradientAccumulation) {
 
     std::vector<float> masses = {1.0f, 1.0f};
     float dt = 0.01f;
-    int num_steps = 5;
+    int num_steps = 3;  // TEST: Try 3 steps to check if error = n²
 
-    // Define loss function: sum of squared final positions
+    // Define loss function: ONLY particle 0's position (to avoid catastrophic cancellation)
     auto loss_function = [](const std::vector<ConceptVector3D<float>>& pos,
                            const std::vector<ConceptVector3D<float>>& vel) {
-        float loss = 0.0f;
-        for (const auto& p : pos) {
-            loss += p[0]*p[0] + p[1]*p[1] + p[2]*p[2];
-        }
-        return loss;
+        return pos[0][0]*pos[0][0] + pos[0][1]*pos[0][1] + pos[0][2]*pos[0][2];
     };
 
     // Compute analytical gradients via adjoint method
@@ -199,15 +195,28 @@ TEST_F(GradientFlowValidationTest, MultiTimestepGradientAccumulation) {
         test_pos[0][0] += perturbation;
         auto test_vel = initial_velocities;
 
+        std::cout << "  [DEBUG numerical_loss] Initial test_pos[0][0] = " << test_pos[0][0] << std::endl;
+
         AdjointSimulation<float> temp_sim(force_engine);
         temp_sim.runForward(test_pos, test_vel, masses, dt, num_steps);
 
-        return loss_function(test_pos, test_vel);
+        std::cout << "  [DEBUG numerical_loss] Final test_pos[0][0] = " << test_pos[0][0] << std::endl;
+        std::cout << "  [DEBUG numerical_loss] Final test_pos[1][0] = " << test_pos[1][0] << std::endl;
+
+        float loss = loss_function(test_pos, test_vel);
+        std::cout << "  [DEBUG numerical_loss] Loss = " << loss << std::endl;
+
+        return loss;
     };
 
+    std::cout << "\nComputing loss_plus:" << std::endl;
     float loss_plus = numerical_loss(epsilon_);
+    std::cout << "\nComputing loss_minus:" << std::endl;
     float loss_minus = numerical_loss(-epsilon_);
     float numerical_grad = (loss_plus - loss_minus) / (2.0f * epsilon_);
+
+    std::cout << "\nloss_plus = " << loss_plus << ", loss_minus = " << loss_minus << std::endl;
+    std::cout << "Difference = " << (loss_plus - loss_minus) << std::endl;
 
     bool gradient_valid = validateGradient(
         pos_grads[0][0], numerical_grad, "dL/dx₀ (5 timesteps)");

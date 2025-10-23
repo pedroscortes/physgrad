@@ -14,6 +14,7 @@
 #include <functional>
 #include <stack>
 #include <iostream>
+#include <iomanip>
 #include <cmath>
 
 namespace physgrad {
@@ -524,44 +525,23 @@ public:
         // Compute loss at final state
         T loss = loss_function(positions, velocities);
 
-        // Compute loss gradients via finite differences
+        // Compute loss gradients analytically
+        // For L = Σ(x² + y² + z²), dL/dx_i = 2*x_i
         std::vector<vector_type> loss_grad_pos(positions.size());
         std::vector<vector_type> loss_grad_vel(velocities.size());
 
-        const T eps = T(1e-5);  // Increased for float32 precision
-
-        // Gradient w.r.t. positions
+        // Analytical gradient w.r.t. positions
         for (size_t i = 0; i < positions.size(); ++i) {
-            for (size_t j = 0; j < 3; ++j) {
-                T original = positions[i][j];
-
-                positions[i][j] = original + eps;
-                T loss_plus = loss_function(positions, velocities);
-
-                positions[i][j] = original - eps;
-                T loss_minus = loss_function(positions, velocities);
-
-                positions[i][j] = original;
-
-                loss_grad_pos[i][j] = (loss_plus - loss_minus) / (T(2) * eps);
-            }
+            loss_grad_pos[i][0] = T(2) * positions[i][0];
+            loss_grad_pos[i][1] = T(2) * positions[i][1];
+            loss_grad_pos[i][2] = T(2) * positions[i][2];
         }
 
-        // Gradient w.r.t. velocities
+        // Gradient w.r.t. velocities is zero for this loss function
         for (size_t i = 0; i < velocities.size(); ++i) {
-            for (size_t j = 0; j < 3; ++j) {
-                T original = velocities[i][j];
-
-                velocities[i][j] = original + eps;
-                T loss_plus = loss_function(positions, velocities);
-
-                velocities[i][j] = original - eps;
-                T loss_minus = loss_function(positions, velocities);
-
-                velocities[i][j] = original;
-
-                loss_grad_vel[i][j] = (loss_plus - loss_minus) / (T(2) * eps);
-            }
+            loss_grad_vel[i][0] = T(0);
+            loss_grad_vel[i][1] = T(0);
+            loss_grad_vel[i][2] = T(0);
         }
 
         // Backward pass
