@@ -10,8 +10,8 @@
  * Version: 2.0 (Incremental Build)
  */
 
-#ifndef PHYSGRAD_ADJOINT_INTEGRATORS_H
-#define PHYSGRAD_ADJOINT_INTEGRATORS_H
+#ifndef PHYSGRAD_ADJOINT_INTEGRATORS_V2_H
+#define PHYSGRAD_ADJOINT_INTEGRATORS_V2_H
 
 #include "common_types.h"
 #include <vector>
@@ -27,7 +27,7 @@
 #endif
 
 namespace physgrad {
-namespace adjoint {
+namespace adjoint_v2 {
 
 // =============================================================================
 // FORWARD DECLARATIONS
@@ -738,7 +738,7 @@ private:
     }
 };
 
-} // namespace adjoint
+} // namespace adjoint_v2
 } // namespace physgrad
 
-#endif // PHYSGRAD_ADJOINT_INTEGRATORS_H
+#endif // PHYSGRAD_ADJOINT_INTEGRATORS_V2_H
