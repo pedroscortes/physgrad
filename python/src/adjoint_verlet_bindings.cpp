@@ -3,7 +3,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/functional.h>
 
-#include "../../src/adjoint_integrators_standalone.h"
+#include "../../src/adjoint_integrators.h"
 #include "../../src/concepts.h"
 
 namespace py = pybind11;
@@ -150,6 +150,41 @@ void bind_adjoint_verlet(py::module& m) {
         }, "Convenience function: run forward + backward passes",
            py::arg("initial_positions"), py::arg("initial_velocities"),
            py::arg("masses"), py::arg("dt"), py::arg("num_steps"),
+           py::arg("loss_function"))
+
+        .def("compute_all_gradients", [](AdjointSimulation<float>& self,
+                py::array_t<float> initial_positions,
+                py::array_t<float> initial_velocities,
+                py::array_t<float> masses,
+                float dt, int num_steps,
+                py::function loss_function) {
+            auto init_pos = numpy_to_vector3d<float>(initial_positions);
+            auto init_vel = numpy_to_vector3d<float>(initial_velocities);
+            auto mass_vec = numpy_to_vector<float>(masses);
+
+            // Wrap Python loss function for C++
+            auto cpp_loss_function = [&loss_function](
+                const std::vector<ConceptVector3D<float>>& positions,
+                const std::vector<ConceptVector3D<float>>& velocities) -> float {
+                auto pos_np = vector3d_to_numpy<float>(positions);
+                auto vel_np = vector3d_to_numpy<float>(velocities);
+                return loss_function(pos_np, vel_np).cast<float>();
+            };
+
+            auto all_grads = self.computeAllGradients(
+                init_pos, init_vel, mass_vec, dt, num_steps, cpp_loss_function);
+
+            // Create Python dictionary for all gradients
+            py::dict result;
+            result["position_grads"] = vector3d_to_numpy<float>(all_grads.position_grads);
+            result["velocity_grads"] = vector3d_to_numpy<float>(all_grads.velocity_grads);
+            result["spring_constant_grads"] = vector_to_numpy<float>(all_grads.parameter_grads.spring_constant_grads);
+            result["rest_length_grads"] = vector_to_numpy<float>(all_grads.parameter_grads.rest_length_grads);
+
+            return result;
+        }, "Comprehensive gradient computation including parameter gradients",
+           py::arg("initial_positions"), py::arg("initial_velocities"),
+           py::arg("masses"), py::arg("dt"), py::arg("num_steps"),
            py::arg("loss_function"));
 
     // Double precision versions
@@ -238,6 +273,41 @@ void bind_adjoint_verlet(py::module& m) {
                 vector3d_to_numpy<double>(vel_grads)
             );
         }, "Convenience function: run forward + backward passes",
+           py::arg("initial_positions"), py::arg("initial_velocities"),
+           py::arg("masses"), py::arg("dt"), py::arg("num_steps"),
+           py::arg("loss_function"))
+
+        .def("compute_all_gradients", [](AdjointSimulation<double>& self,
+                py::array_t<double> initial_positions,
+                py::array_t<double> initial_velocities,
+                py::array_t<double> masses,
+                double dt, int num_steps,
+                py::function loss_function) {
+            auto init_pos = numpy_to_vector3d<double>(initial_positions);
+            auto init_vel = numpy_to_vector3d<double>(initial_velocities);
+            auto mass_vec = numpy_to_vector<double>(masses);
+
+            // Wrap Python loss function for C++
+            auto cpp_loss_function = [&loss_function](
+                const std::vector<ConceptVector3D<double>>& positions,
+                const std::vector<ConceptVector3D<double>>& velocities) -> double {
+                auto pos_np = vector3d_to_numpy<double>(positions);
+                auto vel_np = vector3d_to_numpy<double>(velocities);
+                return loss_function(pos_np, vel_np).cast<double>();
+            };
+
+            auto all_grads = self.computeAllGradients(
+                init_pos, init_vel, mass_vec, dt, num_steps, cpp_loss_function);
+
+            // Create Python dictionary for all gradients
+            py::dict result;
+            result["position_grads"] = vector3d_to_numpy<double>(all_grads.position_grads);
+            result["velocity_grads"] = vector3d_to_numpy<double>(all_grads.velocity_grads);
+            result["spring_constant_grads"] = vector_to_numpy<double>(all_grads.parameter_grads.spring_constant_grads);
+            result["rest_length_grads"] = vector_to_numpy<double>(all_grads.parameter_grads.rest_length_grads);
+
+            return result;
+        }, "Comprehensive gradient computation including parameter gradients",
            py::arg("initial_positions"), py::arg("initial_velocities"),
            py::arg("masses"), py::arg("dt"), py::arg("num_steps"),
            py::arg("loss_function"));
