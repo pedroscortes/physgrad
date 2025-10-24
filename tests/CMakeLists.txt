@@ -37,6 +37,8 @@ set(TEST_SOURCES
     test_adjoint_debug.cpp
     test_velocity_gradient_improvement.cpp
     test_spring_parameter_optimization.cpp
+    test_adjoint_v2_core.cpp
+    test_adjoint_v2_simulation.cpp
 )
 
 if(WITH_PYTORCH AND TORCH_FOUND)
