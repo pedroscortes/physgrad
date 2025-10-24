@@ -33,8 +33,20 @@ Thumbs.db
 *.cubin
 *.ptx
 
-# Test outputs
+# Test outputs and executables
 tests/test_*
 !tests/*.cpp
 !tests/*.cu
 !tests/Makefile
+
+# Root directory executables (build artifacts)
+/test_*
+!/test_data/
+/debug_*
+!/debug_*.cpp
+*_example
+!*.cpp
+!*.cu
+!*.h
+!*.py
+!*.sh
